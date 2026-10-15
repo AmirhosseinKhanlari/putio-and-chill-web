@@ -43,6 +43,7 @@ export const Back10 = (p: Props) => (
 export const Forward10 = (p: Props) => (
   <Icon strokeWidth={1.8} {...p}><path d="M20 12a8 8 0 1 1-2.4-5.7" /><path d="M20 4v4h-4" /><text x="12" y="15.2" fontSize="7" fontWeight="700" textAnchor="middle" fill="currentColor" stroke="none">10</text></Icon>
 );
+/** The iPhone app's icon (public/icon-192.png, made from its AppIcon), with the iOS corner rounding. */
 export const Logo = ({ size = 32 }: { size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16" fill="#2A2457" /><path d="M24 18v28l22-14z" fill="#FF8A4C" /></svg>
+  <img src="/icon-192.png" width={size} height={size} alt="" style={{ borderRadius: size * 0.225, flex: "none" }} />
 );

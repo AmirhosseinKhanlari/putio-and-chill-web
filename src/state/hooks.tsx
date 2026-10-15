@@ -2,17 +2,39 @@ import { useQuery } from "@tanstack/react-query";
 import { createContext, useCallback, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { tmdb, type CatalogItem } from "../api/tmdb";
 import { library, type LibraryEntry } from "../lib/library";
+import { useSettings } from "../lib/settings";
 import { keys, readJSON, writeJSON } from "../lib/storage";
 import { useSession } from "./session";
 
-/** The library, re-rendering when it changes; refreshed from put.io when older than 15 minutes. */
+/** The library, re-rendering when it changes. With automatic updates on (Settings → Library), it's read again from
+ * put.io when older than the chosen interval, checked once a minute while the app is open; with them off, only
+ * when it has never been read or on Update Now. */
 export function useLibrary() {
   useSyncExternalStore(library.subscribe, library.getVersion);
   const { putio } = useSession();
+  const { libraryAutoUpdate, libraryUpdateMinutes } = useSettings();
   useEffect(() => {
-    if (putio && library.isStale()) void refreshLibrary(putio);
-  }, [putio]);
+    if (!putio) return;
+    const check = () => {
+      const due = libraryAutoUpdate && library.isStale(libraryUpdateMinutes * 60_000);
+      if (due || library.updatedAt === 0) void refreshLibrary(putio);
+    };
+    check();
+    return everyMinute(check);
+  }, [putio, libraryAutoUpdate, libraryUpdateMinutes]);
   return library;
+}
+
+/** One shared minute timer for every mounted useLibrary (many screens use it at once); runs the latest check. */
+const minuteChecks = new Set<() => void>();
+let minuteTimer: ReturnType<typeof setInterval> | undefined;
+function everyMinute(check: () => void) {
+  minuteChecks.add(check);
+  minuteTimer ??= setInterval(() => { [...minuteChecks].at(-1)?.(); }, 60_000);
+  return () => {
+    minuteChecks.delete(check);
+    if (!minuteChecks.size && minuteTimer) { clearInterval(minuteTimer); minuteTimer = undefined; }
+  };
 }
 
 export function refreshLibrary(putio: NonNullable<ReturnType<typeof useSession>["putio"]>) {

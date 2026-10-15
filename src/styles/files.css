@@ -1,0 +1,113 @@
+/* File manager and Trash (pages/Files, pages/Trash, components/files). Builds on styles.css: page, pill, round-button,
+   menu, dialog, text-field, file-list, file-row. styles.css loads after this file, so overrides of its classes use two
+   class names to win. */
+
+.page-body.files-body { gap: 22px; }
+.files-head { gap: 8px; min-width: 0; }
+
+/* Folder names are often long release names with no spaces: smaller than display-small, two lines at most. */
+.files-title {
+  font-size: clamp(30px, 3.6vw, 48px); font-weight: 200; letter-spacing: 0.04em; line-height: 1.1;
+  overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.files-title-long { font-size: clamp(22px, 2.4vw, 32px); letter-spacing: 0.02em; }
+.files-note { margin: 0; max-width: 620px; }
+.files-spacer { flex: 1; }
+
+/* Breadcrumbs */
+.files-crumbs { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 0; font-size: 13px; min-width: 0; }
+.files-crumbs li { display: flex; align-items: center; min-width: 0; max-width: 100%; }
+.files-crumbs li + li::before { content: "›"; padding: 0 6px; color: rgba(255, 255, 255, 0.35); }
+.files-crumb { max-width: 240px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 4px 6px; margin: 0 -6px; border: none; border-radius: 8px; background: none; color: var(--muted); font-size: 13px; text-decoration: none; cursor: pointer; }
+a.files-crumb:hover, button.files-crumb:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+.files-crumb-here { color: #fff; font-weight: 600; cursor: default; }
+
+/* Top level: storage and the Trash */
+.files-root-tools { display: flex; flex-direction: column; gap: 14px; max-width: 420px; }
+.files-storage { display: flex; flex-direction: column; gap: 6px; }
+.meter-fill.files-meter-full { background: var(--poor); }
+.files-trash-link { display: flex; align-items: center; gap: 12px; height: 48px; padding: 0 14px; border-radius: 14px; background: var(--surface); border: 1px solid var(--border); text-decoration: none; }
+.files-trash-link:hover { background: var(--surface-strong); }
+.files-trash-link svg { flex: none; color: var(--muted); }
+
+/* Search, sort, new folder, select */
+.files-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
+.files-search { flex: 1 1 280px; max-width: 460px; display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 6px 0 14px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); border: 1px solid var(--border-strong); color: var(--muted); }
+.files-search:focus-within { border-color: rgba(255, 255, 255, 0.5); }
+.files-search input { flex: 1; min-width: 0; height: 40px; border: none; outline: none; background: transparent; color: #fff; font-size: 15px; }
+.files-search input::-webkit-search-cancel-button { display: none; }
+.files-search-clear { width: 32px; height: 32px; flex: none; border: none; border-radius: 999px; background: rgba(255, 255, 255, 0.12); color: #fff; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.files-tools { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Rows */
+.file-row.files-row { gap: 2px; border-radius: 12px; }
+.files-row-selected { background: rgba(255, 255, 255, 0.07); }
+.files-row .file-main { min-height: 64px; }
+.files-row .file-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.files-main-button { border: none; background: none; font: inherit; text-align: left; cursor: pointer; }
+.files-select { cursor: pointer; }
+.files-check { width: 20px; height: 20px; flex: none; margin: 0 2px 0 4px; accent-color: #fff; cursor: pointer; }
+.file-main .files-folder-icon { color: #8cb3ff; }
+.file-main .files-chevron { margin-left: auto; color: rgba(255, 255, 255, 0.35); }
+.files-restore { flex: none; }
+@media (max-width: 560px) {
+  .files-play { display: none; }
+  .pill.files-restore { width: 44px; padding: 0; justify-content: center; }
+  .files-restore .files-bar-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+
+/* Menus open where they were asked for (⋯ or a right-click) and stay on screen. */
+.menu.files-menu { position: fixed; right: auto; top: auto; z-index: 25; max-width: calc(100vw - 16px); }
+.files-menu button:disabled { opacity: 0.45; cursor: default; }
+.files-menu button:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
+.files-menu svg { flex: none; }
+.menu .files-menu-danger, .files-danger { color: #ff9b9b; }
+.files-menu [role="menuitemradio"]::after { content: ""; width: 16px; margin-left: auto; }
+.files-menu [role="menuitemradio"][aria-checked="true"]::after { content: "✓"; text-align: right; }
+
+/* Select mode: the bar floats above the bottom (and above the phone tab bar). */
+.files-selecting { padding-bottom: 180px; }
+.files-bar {
+  position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 16;
+  width: min(600px, calc(100% - 20px)); display: flex; align-items: center; gap: 4px; padding: 6px 6px 6px 18px;
+  border-radius: 999px; background: rgba(30, 30, 38, 0.92); border: 1px solid var(--border-strong);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+}
+.files-bar-count { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.files-bar-text { height: 44px; padding: 0 12px; border: none; border-radius: 999px; background: none; color: #fff; font-size: 14px; cursor: pointer; white-space: nowrap; }
+.files-bar-button { height: 44px; padding: 0 14px; display: inline-flex; align-items: center; gap: 8px; border: none; border-radius: 999px; background: rgba(255, 255, 255, 0.1); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.files-bar-button.files-danger { color: #ff9b9b; }
+.files-bar-text:hover, .files-bar-button:hover { background: rgba(255, 255, 255, 0.18); }
+.files-bar button:disabled { opacity: 0.4; cursor: default; background: none; }
+@media (max-width: 760px) {
+  .files-bar { bottom: calc(max(10px, env(safe-area-inset-bottom)) + 64px); padding-left: 14px; }
+  .files-selecting { padding-bottom: 220px; }
+}
+@media (max-width: 560px) {
+  .files-bar-button { width: 44px; padding: 0; justify-content: center; }
+  .files-bar-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .files-bar-text { padding: 0 8px; }
+}
+
+/* Dialogs */
+.files-dialog-title { font-size: 20px; overflow-wrap: anywhere; }
+.files-dialog-text { margin: 0; }
+.dialog.files-dialog-wide { width: min(560px, 100%); max-height: min(86vh, 720px); }
+
+/* Folder picker */
+.files-picker { min-height: 180px; max-height: 46vh; overflow-y: auto; margin: 0 -8px; padding: 0 8px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.files-picker-note { margin: 14px 4px; }
+.files-picker-list { list-style: none; margin: 0; padding: 4px 0; display: flex; flex-direction: column; }
+.files-picker-row { width: 100%; min-height: 48px; display: flex; align-items: center; gap: 12px; padding: 8px 10px; border: none; border-radius: 10px; background: none; color: #fff; font-size: 15px; text-align: left; cursor: pointer; }
+.files-picker-row:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08); }
+.files-picker-row:disabled { color: var(--muted); cursor: default; }
+.files-picker-row svg:first-child { flex: none; color: #8cb3ff; }
+.files-picker-row:disabled svg:first-child { color: var(--muted); }
+.files-picker-row > svg:last-child { flex: none; color: rgba(255, 255, 255, 0.35); }
+.files-picker-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files-picker-new { display: flex; gap: 8px; align-items: center; }
+.files-picker-new .text-field { height: 40px; border-radius: 999px; }
+.files-picker-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+@media (max-width: 480px) {
+  .files-picker-foot .files-spacer { flex-basis: 100%; height: 0; }
+}

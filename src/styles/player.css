@@ -1,0 +1,71 @@
+/* Player additions: drawn subtitles, the subtitles / audio / speed menus, Next Episode card and the resume notice.
+   Uses the tokens from styles.css (--border-strong, --muted, --good, --okay, --poor, --gutter). */
+
+/* Subtitles: above the picture and the gradients, below the controls; they glide up when the controls show. */
+.subtitle-overlay { position: absolute; left: 0; right: 0; z-index: 1; display: flex; justify-content: center; padding: 0 16px; pointer-events: none; transition: bottom 0.25s ease; }
+.subtitle-text { display: flex; flex-direction: column; align-items: center; text-align: center; font-weight: 600; line-height: 1.22; white-space: pre-wrap; overflow-wrap: anywhere; }
+.subtitle-line { padding: 0.04em 0.32em; }
+.subtitle-line:first-child { border-top-left-radius: 0.16em; border-top-right-radius: 0.16em; }
+.subtitle-line:last-child { border-bottom-left-radius: 0.16em; border-bottom-right-radius: 0.16em; }
+.subtitle-bg-translucent .subtitle-line { background: rgba(0, 0, 0, 0.5); text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8); }
+.subtitle-bg-solid .subtitle-line { background: rgba(0, 0, 0, 0.9); }
+/* Without a box, an outline keeps text readable on bright scenes. */
+.subtitle-bg-none .subtitle-line { text-shadow: 0 0 2px #000, 0 0 2px #000, 0 1px 3px #000, 0 0 6px rgba(0, 0, 0, 0.9); }
+.subtitle-face-standard { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif; }
+.subtitle-face-rounded { font-family: ui-rounded, "SF Pro Rounded", "Arial Rounded MT Bold", "Nunito", "Varela Round", -apple-system, sans-serif; }
+.subtitle-face-serif { font-family: ui-serif, "New York", Georgia, "Times New Roman", serif; }
+.subtitle-face-monospaced { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; font-weight: 500; }
+
+/* Menus in the top bar */
+.player-panel { width: min(440px, calc(100vw - 2 * var(--gutter))); max-height: min(72vh, 640px); overflow-y: auto; overscroll-behavior: contain; gap: 2px; }
+.player-choice { min-width: 200px; max-height: min(60vh, 480px); overflow-y: auto; }
+.panel-section { display: flex; flex-direction: column; gap: 2px; padding-bottom: 6px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+.panel-section:last-of-type { border-bottom: none; }
+.panel-heading { padding: 10px 12px 4px; font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.panel-heading-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.panel-subheading { padding: 8px 12px 2px; font-size: 12px; font-weight: 600; color: rgba(255, 255, 255, 0.55); }
+.panel-language .select { height: 32px; padding: 0 8px; font-size: 13px; letter-spacing: normal; text-transform: none; }
+.menu .panel-option { justify-content: space-between; width: 100%; color: #fff; }
+.menu .panel-option:disabled { cursor: default; opacity: 0.6; }
+.menu .panel-option svg { flex: none; color: var(--good); }
+.panel-option-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.panel-option-title { font-weight: 600; }
+.panel-option-release { font-weight: 500; font-size: 13px; overflow-wrap: anywhere; }
+.panel-option-detail { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; color: var(--muted); }
+.panel-tag { flex: none; padding: 1px 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.12); color: rgba(255, 255, 255, 0.85); font-size: 11px; font-weight: 600; }
+.panel-tag-good { background: rgba(74, 222, 128, 0.16); color: var(--good); }
+.panel-tag-warn { background: rgba(250, 204, 21, 0.16); color: var(--okay); }
+.panel-now { padding: 2px 12px 6px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.panel-timing { display: flex; align-items: center; justify-content: space-between; padding: 0 6px 4px; }
+.panel-timing .round-button { font-size: 22px; font-weight: 500; }
+.panel-timing-value { display: flex; flex-direction: column; align-items: center; }
+.menu .panel-style a, .menu .menu-note a { text-decoration: underline; padding: 0; display: inline; }
+.panel-spinner { display: inline-block; flex: none; width: 16px; height: 16px; border-radius: 999px; border: 2px solid rgba(255, 255, 255, 0.25); border-top-color: #fff; animation: panel-spin 0.8s linear infinite; vertical-align: -3px; }
+@keyframes panel-spin { to { transform: rotate(360deg); } }
+.icon-button[data-on="true"] { background: rgba(255, 255, 255, 0.3); border-color: rgba(255, 255, 255, 0.5); }
+.icon-button.speed-button { min-width: 56px; padding: 0 12px; width: auto; font-size: 14px; font-weight: 600; }
+
+/* "Resumed at 14:28 · Start over": shown for a few seconds after playback starts, whatever the controls do. */
+.resume-notice { position: absolute; left: var(--gutter); z-index: 3; transition: bottom 0.25s ease, opacity 0.3s ease; animation: resume-in 0.3s ease; }
+@keyframes resume-in { from { opacity: 0; transform: translateY(8px); } }
+
+/* Next Episode card */
+.next-up { position: absolute; right: var(--gutter); z-index: 3; width: min(400px, calc(100% - 2 * var(--gutter))); padding: 14px; border-radius: 22px; background: rgba(28, 28, 36, 0.88); border: 1px solid var(--border-strong); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); display: flex; flex-direction: column; gap: 12px; transition: bottom 0.25s ease; animation: next-up-in 0.35s cubic-bezier(0.2, 0.8, 0.2, 1); }
+@keyframes next-up-in { from { opacity: 0; transform: translateX(24px); } }
+.next-up-head { display: flex; gap: 12px; align-items: flex-start; }
+.next-up-still { width: 128px; aspect-ratio: 16 / 9; flex: none; border-radius: 8px; object-fit: cover; background: #222a36; }
+.next-up-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.next-up-actions { display: flex; gap: 10px; }
+.next-up-play { position: relative; flex: 1; height: 44px; border: none; border-radius: 999px; overflow: hidden; background: rgba(255, 255, 255, 0.72); color: #000; font-weight: 700; font-size: 15px; cursor: pointer; }
+.next-up-fill { position: absolute; inset: 0; background: #fff; transform-origin: left center; }
+.next-up-fill-counting { animation-name: next-up-count; animation-timing-function: linear; animation-fill-mode: both; }
+@keyframes next-up-count { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.next-up-label { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+
+@media (max-width: 640px) {
+  .next-up-still { width: 96px; }
+  .player-panel { max-height: 64vh; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .subtitle-overlay, .resume-notice, .next-up { transition: none; animation: none; }
+}

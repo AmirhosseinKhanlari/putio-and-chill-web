@@ -1,83 +1,114 @@
-import { useState } from "react";
-import { chillSignInURL } from "../api/chill";
+/** Settings: a hub of pages, like the iPhone app's (account card, then Playback, Smart Get, Library, services).
+ * The open page is in the address (?page=…), so Back returns to the hub. */
+import { useState, type ReactNode } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Group, NavRow, glyphs } from "../components/settings/Controls";
+import { AboutPage, FoldersPage, LibraryPage, PlaybackPage, ServicesPage, SmartGetPage, SourcesPage, SubtitlesPage } from "../components/settings/Pages";
 import { TopBar } from "../components/TopBar";
 import { bytes } from "../lib/format";
-import { updateSettings, useSettings } from "../lib/settings";
-import { refreshLibrary, useAccount, useLibrary } from "../state/hooks";
+import { languageName, qualityName, useSettings } from "../lib/settings";
+import { useAccount } from "../state/hooks";
 import { useSession } from "../state/session";
 
-const qualities = [4320, 2160, 1080, 720, 480];
-const qualityName = (r: number) => (r === 4320 ? "8K" : r === 2160 ? "4K" : `${r}p`);
+const pages: Record<string, { title: string; render: () => ReactNode }> = {
+  playback: { title: "Playback", render: () => <PlaybackPage /> },
+  subtitles: { title: "Subtitles", render: () => <SubtitlesPage /> },
+  "smart-get": { title: "Smart Get", render: () => <SmartGetPage /> },
+  sources: { title: "Sources", render: () => <SourcesPage /> },
+  library: { title: "Library", render: () => <LibraryPage /> },
+  folders: { title: "put.io Folders", render: () => <FoldersPage /> },
+  services: { title: "Connected Services", render: () => <ServicesPage /> },
+  about: { title: "About", render: () => <AboutPage /> },
+};
 
 export function Settings() {
-  const session = useSession();
-  const account = useAccount().data;
-  const lib = useLibrary();
-  const settings = useSettings();
-  const [pasted, setPasted] = useState("");
-  // chill.institute signs in through put.io and comes back here with the token.
-  const chillURL = chillSignInURL(`${window.location.origin}/settings`);
-
+  const [params] = useSearchParams();
+  const page = pages[params.get("page") ?? ""];
   return (
     <div className="page">
       <TopBar back />
       <div className="page-body narrow settings">
-        <h1 className="display-small">Settings</h1>
-
-        <section className="settings-group" aria-labelledby="s-account">
-          <h2 id="s-account">put.io</h2>
-          <div className="settings-row">
-            <div>
-              <div className="strong">{account?.username ?? "Signed in"}</div>
-              {account?.disk && <div className="muted small">{bytes(account.disk.used)} of {bytes(account.disk.size)} used · {bytes(account.disk.avail)} free</div>}
+        {page ? (
+          <>
+            <div className="settings-page-head">
+              <Link to="/settings" className="settings-up small">Settings</Link>
+              <h1 className="settings-title">{page.title}</h1>
             </div>
-            <button type="button" className="pill pill-danger" onClick={session.signOut}>Sign Out</button>
-          </div>
-          <div className="settings-row">
-            <div>
-              <div className="strong">Library</div>
-              <div className="muted small">{lib.entries.length} videos{lib.isRefreshing ? ` · ${lib.progressText}` : ""}</div>
-            </div>
-            <button type="button" className="pill" disabled={lib.isRefreshing || !session.putio} onClick={() => session.putio && void refreshLibrary(session.putio)}>Update Now</button>
-          </div>
-        </section>
-
-        <section className="settings-group" aria-labelledby="s-get">
-          <h2 id="s-get">Smart Get</h2>
-          <div className="settings-row">
-            <div>
-              <label className="strong" htmlFor="quality">Quality</label>
-              <div className="muted small">Get & Watch picks this quality with the most seeders; lower first when it's missing.</div>
-            </div>
-            <select id="quality" className="select" value={settings.smartGet.resolution ?? 4320} onChange={(e) => updateSettings({ smartGet: { ...settings.smartGet, resolution: Number(e.target.value) } })}>
-              {qualities.map((q) => <option key={q} value={q}>{qualityName(q)}</option>)}
-            </select>
-          </div>
-          <div className="settings-row">
-            <div>
-              <div className="strong">chill.institute</div>
-              <div className="muted small">{session.chill ? "Connected: Get & Watch and Versions search it." : "Connect it to get movies and shows into put.io."}</div>
-            </div>
-            {session.chill ? (
-              <button type="button" className="pill pill-danger" onClick={() => session.setChillToken(null)}>Disconnect</button>
-            ) : (
-              <a className="pill pill-primary" href={chillURL}>Connect</a>
-            )}
-          </div>
-          {!session.chill && (
-            <form className="settings-row" onSubmit={(e) => { e.preventDefault(); if (pasted.trim()) session.setChillToken(pasted.trim()); }}>
-              <label className="visually-hidden" htmlFor="chill-token">chill.institute token</label>
-              <input id="chill-token" className="text-field" type="password" autoComplete="off" placeholder="…or paste your chill.institute token" value={pasted} onChange={(e) => setPasted(e.target.value)} />
-              <button type="submit" className="pill" disabled={!pasted.trim()}>Save</button>
-            </form>
-          )}
-        </section>
-
-        <section className="settings-group" aria-labelledby="s-about">
-          <h2 id="s-about">About</h2>
-          <p className="muted small">Movie and show data from TMDB. Videos stream from your put.io. This app stores your sign-in only in this browser.</p>
-        </section>
+            {page.render()}
+          </>
+        ) : (
+          <Hub />
+        )}
       </div>
     </div>
+  );
+}
+
+function Hub() {
+  const s = useSettings();
+  const session = useSession();
+  const enabled = s.sources.filter((x) => x.enabled && (x.id !== "chill" || session.chill)).length;
+  const smartGet = s.oneTapGet ? [qualityName(s.smartGet.resolution), s.smartGet.maxSizeGB ? `≤ ${s.smartGet.maxSizeGB} GB` : ""].filter(Boolean).join(" · ") : "Off";
+  const connected = [Boolean(session.chill), Boolean(s.imdbWatchlist), Boolean(s.openSubtitlesKey)].filter(Boolean).length;
+  return (
+    <>
+      <h1 className="display-small">Settings</h1>
+      <AccountCard />
+      <Group>
+        <NavRow page="playback" icon={glyphs.play} color="#3b82f6" label="Playback" value={s.autoPlayNextEpisode ? "Auto-play on" : "Auto-play off"} />
+        <NavRow page="subtitles" icon={glyphs.captions} color="#f97316" label="Subtitles" value={languageName(s.subtitleLanguage) ?? "Off"} />
+      </Group>
+      <Group>
+        <NavRow page="smart-get" icon={glyphs.bolt} color="#eab308" label="Smart Get" value={smartGet} />
+        <NavRow page="sources" icon={glyphs.antenna} color="#a855f7" label="Sources" value={`${enabled} on`} />
+      </Group>
+      <Group>
+        <NavRow page="library" icon={glyphs.stack} color="#14b8a6" label="Library" value={s.libraryAutoUpdate ? "Updates automatically" : "Manual"} />
+        <NavRow page="folders" icon={glyphs.folder} color="#06b6d4" label="put.io Folders" value={s.moviesFolder || s.tvFolder ? "Custom" : "Default"} />
+      </Group>
+      <Group>
+        <NavRow page="services" icon={glyphs.link} color="#22c55e" label="Connected Services" value={`${connected} connected`} />
+        <NavRow page="about" icon={glyphs.info} color="#6b7280" label="About" />
+      </Group>
+    </>
+  );
+}
+
+/** put.io account: who, how much space, sign out (asks first). */
+function AccountCard() {
+  const session = useSession();
+  const account = useAccount().data;
+  const [confirming, setConfirming] = useState(false);
+  const name = account?.username ?? "put.io";
+  const disk = account?.disk;
+  const used = disk && disk.size ? Math.min(1, disk.used / disk.size) : 0;
+  return (
+    <section className="settings-account" aria-label="put.io account">
+      <div className="settings-account-row">
+        <span className="settings-avatar" aria-hidden="true">{name.slice(0, 1).toUpperCase()}</span>
+        <div className="settings-text">
+          <span className="settings-account-name">{name}</span>
+          <span className="muted small">put.io account{account?.mail ? ` · ${account.mail}` : ""}</span>
+        </div>
+        {!confirming && <button type="button" className="pill pill-small pill-danger" onClick={() => setConfirming(true)}>Sign Out</button>}
+      </div>
+      {disk && (
+        <div className="stack-small">
+          <div className="settings-meter" role="meter" aria-label="put.io storage used" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(used * 100)}>
+            <span style={{ width: `${used * 100}%`, background: used > 0.9 ? "var(--poor)" : "var(--good)" }} />
+          </div>
+          <span className="muted small">{bytes(disk.used)} of {bytes(disk.size)} used · {bytes(disk.avail)} free</span>
+        </div>
+      )}
+      {confirming && (
+        <div className="settings-confirm" role="alertdialog" aria-label="Sign out of put.io?">
+          <span>Sign out of put.io? This browser forgets your library and sign-ins.</span>
+          <div className="chips">
+            <button type="button" className="pill pill-small" onClick={() => setConfirming(false)}>Cancel</button>
+            <button type="button" className="pill pill-small pill-danger" onClick={session.signOut}>Sign Out</button>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }

@@ -24,6 +24,21 @@ export interface PutioAccount {
   trash_size?: number;
 }
 
+/** A deleted file waiting in put.io's Trash until it's emptied or expires. Dates are UTC without a zone. */
+export interface PutioTrashFile {
+  id: number;
+  name: string;
+  file_type?: string;
+  size?: number;
+  deleted_at?: string;
+  expiration_date?: string;
+}
+
+export interface PutioTrash {
+  files: PutioTrashFile[];
+  trash_size?: number;
+}
+
 export interface PutioTransfer {
   id: number;
   name?: string;
@@ -102,6 +117,52 @@ export class PutioClient {
 
   async rename(id: number, name: string): Promise<void> {
     await this.request("files/rename", { form: { file_id: String(id), name } });
+  }
+
+  /** Moves files or folders into `parentID`. */
+  async moveFiles(ids: number[], parentID: number): Promise<void> {
+    await this.request("files/move", { form: { file_ids: ids.join(","), parent_id: String(parentID) } });
+  }
+
+  /** Copies one file or folder into `parentID` (put.io copies one item per call); returns the copy. */
+  async copyFile(id: number, parentID: number): Promise<PutioFile> {
+    return (await this.request<{ file: PutioFile }>("files/copy", { form: { file_id: String(id), parent_id: String(parentID) } })).file;
+  }
+
+  /** A short-lived link to download the original file. */
+  async originalURL(fileID: number): Promise<string> {
+    return (await this.request<{ url: string }>(`files/${fileID}/url`)).url;
+  }
+
+  /** The folders from the top of put.io down to `folderID`, itself included (empty for the root). put.io has no
+   * path endpoint, so this walks up one folder per request; stops after 32 levels. */
+  async folderPath(folderID: number): Promise<PutioFile[]> {
+    const path: PutioFile[] = [];
+    let id = folderID;
+    while (id !== 0 && path.length < 32) {
+      const folder = (await this.request<{ file: PutioFile }>(`files/${id}`)).file;
+      path.unshift(folder);
+      id = folder.parent_id ?? 0;
+    }
+    return path;
+  }
+
+  // Trash: deleted files stay here until it's emptied or they expire.
+
+  async trash(): Promise<PutioTrash> {
+    return this.request("trash/list", { query: { per_page: "1000" } });
+  }
+
+  async restoreFromTrash(ids: number[]): Promise<void> {
+    await this.request("trash/restore", { form: { file_ids: ids.join(",") } });
+  }
+
+  async deleteFromTrash(ids: number[]): Promise<void> {
+    await this.request("trash/delete", { form: { file_ids: ids.join(",") } });
+  }
+
+  async emptyTrash(): Promise<void> {
+    await this.request("trash/empty", { form: {} });
   }
 
   async setStartFrom(fileID: number, seconds: number): Promise<void> {

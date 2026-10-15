@@ -1,28 +1,70 @@
-/** Get & Watch: picks the best release and sends it to put.io, into the same folders the iPhone app uses
- * (AMDB/Movies, AMDB/TV/<Show>/Season N). */
-import type { Release } from "../api/chill";
-import type { PutioClient, PutioTransfer } from "../api/putio";
+/** Get & Watch: picks the release Smart Get sends (the iPhone app's SmartPicker) and sends it to put.io, into the
+ * folders picked in Settings (default AMDB/Movies and AMDB/TV/<Show>/Season N, as in the iPhone app). */
+import type { Release } from "../api/sources/types";
+import { isFolder, type PutioClient, type PutioTransfer } from "../api/putio";
 import type { MediaKind } from "../api/tmdb";
+import { loadSettings, type AppSettings, type SmartGetRule } from "./settings";
 import { readJSON, writeJSON } from "./storage";
 
-/** The preferred quality with the most seeders; else the closest lower one; else the closest higher one. Never a
- * camera recording, never a release nobody seeds (when others have seeders). */
-export function pickRelease(releases: Release[], preferred: number): Release | undefined {
-  const usable = releases.filter((r) => r.parsed.source !== "CAM");
+/** The preferred quality with the most seeders; else the nearest lower one; else the nearest higher one; unknown
+ * quality last. Never a camera recording, never one bigger than the size cap (unknown sizes are allowed), never a
+ * release nobody seeds (unless no release says how many seed it). "Best" (null) prefers 8K and works down. */
+export function pickRelease(releases: Release[], rule: SmartGetRule): Release | undefined {
+  const cap = rule.maxSizeGB !== null ? rule.maxSizeGB * 1_000_000_000 : undefined;
+  const usable = releases.filter((r) => r.parsed.source !== "CAM" && (cap === undefined || r.sizeBytes === undefined || r.sizeBytes <= cap));
   const seeded = usable.filter((r) => (r.seeders ?? 0) > 0);
-  const pool = seeded.length ? seeded : usable;
-  const rank = (r: Release) => {
-    const res = r.parsed.resolution || 720;
+  const pool = seeded.length ? seeded : usable.filter((r) => r.seeders === undefined);
+  const preferred = rule.resolution ?? 4320;
+  const priority = (r: Release) => {
+    const res = r.parsed.resolution;
     if (res === preferred) return 0;
-    return res < preferred ? 1 + (preferred - res) / 10_000 : 2 + (res - preferred) / 10_000;
+    if (res === 0) return 10_000;
+    return res < preferred ? 10 + (preferred - res) : 5_000 + (res - preferred);
   };
-  return [...pool].sort((a, b) => rank(a) - rank(b) || (b.seeders ?? 0) - (a.seeders ?? 0))[0];
+  return [...pool].sort((a, b) => priority(a) - priority(b) || (b.seeders ?? 0) - (a.seeders ?? 0))[0];
 }
 
+type FolderSettings = Pick<AppSettings, "moviesFolder" | "tvFolder" | "seasonFolders">;
+
+export const defaultMoviesPath = ["AMDB", "Movies"];
+export const defaultTVPath = ["AMDB", "TV"];
+
+/** put.io folder names can't contain "/" (the iPhone app's rule, so both apps find the same show folder). */
+export function folderName(title: string): string {
+  const cleaned = title.replace(/\//g, "-").trim();
+  return cleaned || "Untitled";
+}
+
+/** Where a download goes: a base folder (picked in Settings by id, else created from the root) and the folders
+ * below it, the show and, when season folders are on, "Season N". */
+export function destination(folders: FolderSettings, kind: MediaKind, title: string, season?: number): { rootID: number; path: string[] } {
+  const below = kind === "tv" ? (folders.seasonFolders && season !== undefined ? [folderName(title), `Season ${season}`] : [folderName(title)]) : [];
+  const picked = kind === "tv" ? folders.tvFolder : folders.moviesFolder;
+  if (picked) return { rootID: picked.id, path: below };
+  return { rootID: 0, path: [...(kind === "tv" ? defaultTVPath : defaultMoviesPath), ...below] };
+}
+
+/** "AMDB/TV/Severance/Season 2", for Settings and messages. */
+export function displayPath(folders: FolderSettings, kind: MediaKind, title: string, season?: number): string {
+  const picked = kind === "tv" ? folders.tvFolder : folders.moviesFolder;
+  const base = picked?.path ?? (kind === "tv" ? defaultTVPath : defaultMoviesPath).join("/");
+  return [base, ...destination(folders, kind, title, season).path.slice(picked ? 0 : 2)].join("/");
+}
+
+/** The default folders, for code that only knows a kind and title. */
 export function folderPath(kind: MediaKind, title: string, season?: number): string[] {
-  const safe = title.replace(/[/\\:]/g, " ").trim();
-  if (kind === "movie") return ["AMDB", "Movies"];
-  return season !== undefined ? ["AMDB", "TV", safe, `Season ${season}`] : ["AMDB", "TV", safe];
+  return destination({ moviesFolder: null, tvFolder: null, seasonFolders: true }, kind, title, season).path;
+}
+
+/** Finds or creates `path` inside folder `rootID` and returns the last folder's id. */
+async function ensureFolder(putio: PutioClient, rootID: number, path: string[]): Promise<number> {
+  let parent = rootID;
+  for (const name of path) {
+    const { files } = await putio.list(parent);
+    const existing = files.find((f) => isFolder(f) && f.name === name);
+    parent = existing ? existing.id : (await putio.createFolder(name, parent)).id;
+  }
+  return parent;
 }
 
 export interface PendingTransfer {
@@ -42,8 +84,23 @@ const PENDING_KEY = "pc.transfers.v1";
 export const pendingTransfers = (): PendingTransfer[] => readJSON<PendingTransfer[]>(PENDING_KEY, []);
 export const savePendingTransfers = (list: PendingTransfer[]) => writeJSON(PENDING_KEY, list);
 
-export async function sendToPutio(putio: PutioClient, release: Release, target: Omit<PendingTransfer, "transferID" | "releaseName" | "addedAt">): Promise<PutioTransfer> {
-  const parent = await putio.ensurePath(folderPath(target.kind, target.title, target.season));
+export async function sendToPutio(
+  putio: PutioClient,
+  release: Release,
+  target: Omit<PendingTransfer, "transferID" | "releaseName" | "addedAt">,
+  folders: FolderSettings = loadSettings(),
+): Promise<PutioTransfer> {
+  const { rootID, path } = destination(folders, target.kind, target.title, target.season);
+  let parent: number;
+  try {
+    parent = await ensureFolder(putio, rootID, path);
+  } catch (error) {
+    // The folder picked in Settings was deleted or moved out of reach.
+    if (rootID !== 0 && error instanceof Error && "status" in error && (error as { status: number }).status === 404) {
+      throw new Error(`The ${target.kind === "tv" ? "TV" : "Movies"} folder picked in Settings is gone. Pick another in Settings → put.io Folders.`);
+    }
+    throw error;
+  }
   const transfer = await putio.addTransfer(release.link, parent);
   savePendingTransfers([{ ...target, transferID: transfer.id, releaseName: release.name, addedAt: Date.now() }, ...pendingTransfers()].slice(0, 50));
   return transfer;

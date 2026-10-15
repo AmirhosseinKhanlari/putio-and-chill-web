@@ -1,0 +1,15 @@
+/* Versions: quality chips, sort, and each release's size, seeders and where it was found. */
+.versions-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.versions-chips { flex: 1 1 260px; }
+.versions-chips .chip[aria-pressed="true"] { background: #fff; color: #000; font-weight: 700; }
+.versions-sort .select { height: 36px; }
+.versions-status { min-height: 18px; }
+.version-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; color: var(--muted); }
+.version-seeders { color: var(--good); }
+.version-dead { color: var(--poor); }
+.version-source { padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border-strong); font-size: 11px; }
+.link-button { padding: 0; border: none; background: none; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
+@media (max-width: 520px) {
+  .versions li { flex-direction: column; align-items: stretch; }
+  .versions li .pill { justify-content: center; }
+}

@@ -1,14 +1,17 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import type { Release, ReleaseQuery } from "../api/chill";
-import type { CatalogItem } from "../api/tmdb";
+import { StrictMode, useEffect, useMemo, useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
+import { useNavigate } from "react-router-dom";
+import { enabledProviders, releaseKey, searchReleases, sortReleases, sourceNames, type ReleaseSnapshot, type ReleaseSort } from "../api/sources";
+import type { Release, ReleaseQuery } from "../api/sources/types";
+import { hasTMDB, tmdb, type CatalogItem } from "../api/tmdb";
 import { bytes } from "../lib/format";
 import { resolutionLabel } from "../lib/releaseName";
-import { loadSettings } from "../lib/settings";
-import { pickRelease, sendToPutio } from "../lib/smartGet";
+import { loadSettings, qualityName, useSettings } from "../lib/settings";
+import { displayPath, pickRelease, sendToPutio } from "../lib/smartGet";
 import { useToast } from "../state/hooks";
 import { useSession } from "../state/session";
 import { CloseIcon } from "./Icons";
+import "../styles/versions.css";
 
 export interface GetTarget {
   item: CatalogItem;
@@ -21,41 +24,88 @@ export interface GetTarget {
 
 export function releaseQuery(t: GetTarget): ReleaseQuery | undefined {
   if (t.text) return { kind: "text", text: t.text };
-  if (t.item.kind === "movie") return { kind: "movie", title: t.item.title, year: t.item.year };
-  if (!t.imdbID || t.season === undefined) return undefined;
-  return t.episode !== undefined ? { kind: "episode", imdbID: t.imdbID, season: t.season, episode: t.episode } : { kind: "season", imdbID: t.imdbID, season: t.season };
+  const { title } = t.item;
+  if (t.item.kind === "movie") return { kind: "movie", title, year: t.item.year, imdbID: t.imdbID };
+  if (t.season === undefined) return undefined;
+  return t.episode !== undefined ? { kind: "episode", title, imdbID: t.imdbID, season: t.season, episode: t.episode } : { kind: "season", title, imdbID: t.imdbID, season: t.season };
 }
 
-/** Get & Watch: find releases on chill.institute, pick the best and send it to put.io. */
+/** YTS looks movies up by IMDb id; callers that only have the TMDB item (Home's hero) get it here, once per movie. */
+const imdbIDs = new Map<number, Promise<string | undefined>>();
+async function withIMDbID(target: GetTarget): Promise<GetTarget> {
+  const { item } = target;
+  if (target.imdbID || target.text || item.kind !== "movie" || !item.tmdbID || !hasTMDB) return target;
+  if (!imdbIDs.has(item.tmdbID)) imdbIDs.set(item.tmdbID, tmdb.detail("movie", item.tmdbID).then((d) => d.imdbID, () => undefined));
+  return { ...target, imdbID: await imdbIDs.get(item.tmdbID) };
+}
+
+const label = (t: GetTarget) => (t.episode !== undefined ? `S${t.season} E${t.episode}` : t.season !== undefined ? `Season ${t.season}` : t.item.title);
+
+/** What the Versions list needs from the page that opened it. */
+interface VersionsDeps {
+  search: (target: GetTarget, onUpdate: (s: ReleaseSnapshot) => void, signal: AbortSignal) => Promise<ReleaseSnapshot>;
+  send: (target: GetTarget, release: Release) => Promise<void>;
+  openSettings: (page: string) => void;
+}
+
+/** Get & Watch: searches every source turned on in Settings (chill.institute too, when connected), then either
+ * sends the release Smart Get picks to put.io or, with one-tap Get off, opens Versions. */
 export function useGetAndWatch() {
   const { putio, chill } = useSession();
   const toast = useToast();
+  const navigate = useNavigate();
+  const settings = useSettings();
   const [busy, setBusy] = useState(false);
+  const canGet = Boolean(putio) && enabledProviders(settings, chill).length > 0;
 
+  async function search(target: GetTarget, options: { onUpdate?: (s: ReleaseSnapshot) => void; signal?: AbortSignal } = {}): Promise<ReleaseSnapshot> {
+    const providers = enabledProviders(loadSettings(), chill);
+    if (!providers.length) throw new Error("Every source is turned off. Turn one on in Settings → Sources.");
+    const query = releaseQuery(await withIMDbID(target));
+    if (!query) throw new Error("Pick a season or an episode to search for.");
+    return searchReleases(query, providers, options);
+  }
+
+  /** Every release found; throws only when nothing was found because every source failed. */
   async function releases(target: GetTarget): Promise<Release[]> {
-    if (!chill) throw new Error("Connect chill.institute in Settings to get movies and shows.");
-    const query = releaseQuery(target);
-    if (!query) throw new Error("This show has no IMDb id yet, so it can't be searched.");
-    return chill.releases(query);
+    const snapshot = await search(target);
+    if (!snapshot.releases.length && snapshot.failures.length) throw new Error(snapshot.failures.map((f) => f.message).join(" "));
+    return snapshot.releases;
   }
 
   async function send(target: GetTarget, release: Release) {
     if (!putio) return;
-    await sendToPutio(putio, release, {
-      tmdbID: target.item.tmdbID, kind: target.item.kind, title: target.item.title, season: target.season, episode: target.episode,
-      posterPath: target.item.posterPath, backdropPath: target.item.backdropPath,
-    });
-    const what = target.episode !== undefined ? `S${target.season} E${target.episode}` : target.season !== undefined ? `Season ${target.season}` : target.item.title;
-    toast(`Sending ${what} to put.io (${resolutionLabel(release.parsed.resolution) || "best quality"})`);
+    const { item, season, episode } = target;
+    try {
+      await sendToPutio(putio, release, { tmdbID: item.tmdbID, kind: item.kind, title: item.title, season, episode, posterPath: item.posterPath, backdropPath: item.backdropPath });
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "put.io didn't take it. Try again.");
+      throw error;
+    }
+    const where = target.text ? "" : ` → ${displayPath(loadSettings(), item.kind, item.title, season)}`;
+    toast(`Sending ${label(target)} to put.io (${resolutionLabel(release.parsed.resolution) || "unknown quality"})${where}`);
   }
 
+  const deps: VersionsDeps = {
+    search: (target, onUpdate, signal) => search(target, { onUpdate, signal }),
+    send,
+    openSettings: (page) => navigate(`/settings?page=${page}`),
+  };
+
   async function getBest(target: GetTarget) {
+    const current = loadSettings();
+    if (!current.oneTapGet) { openVersions(target, deps); return; }
     setBusy(true);
     try {
-      const found = await releases(target);
-      const best = pickRelease(found, loadSettings().smartGet.resolution ?? 4320);
-      if (!best) { toast("No versions found. Try Versions to search more widely."); return; }
-      await send(target, best);
+      const snapshot = await search(target);
+      const best = pickRelease(snapshot.releases, current.smartGet);
+      if (best) { await send(target, best).catch(() => {}); return; }
+      if (snapshot.releases.length) {
+        toast(`Nothing fits Smart Get (${qualityName(current.smartGet.resolution)}${current.smartGet.maxSizeGB ? `, up to ${current.smartGet.maxSizeGB} GB` : ""}). Pick a version.`);
+        openVersions(target, deps);
+      } else {
+        toast(snapshot.failures.length === enabledProviders(current, chill).length ? "No source answered. Try again in a minute." : "No versions found.");
+      }
     } catch (error) {
       toast(error instanceof Error ? error.message : "Couldn't get it right now.");
     } finally {
@@ -63,53 +113,146 @@ export function useGetAndWatch() {
     }
   }
 
-  return { busy, getBest, releases, send, canGet: Boolean(chill) };
+  return { busy, getBest, releases, search, send, canGet, deps };
 }
 
-/** Every version chill.institute finds, best first, each one-click to put.io. */
+/** Versions opened by Get & Watch (one-tap Get off). The pages own their own Versions state, so this one gets a
+ * small root of its own; it still talks to the page through `deps` (put.io, toasts, navigation). */
+function openVersions(target: GetTarget, deps: VersionsDeps) {
+  const element = document.createElement("div");
+  document.body.appendChild(element);
+  const root = createRoot(element);
+  const close = () => { root.unmount(); element.remove(); };
+  root.render(<StrictMode><VersionsPanel target={target} deps={deps} onClose={close} /></StrictMode>);
+}
+
+/** Every version the sources find, each one click to put.io. */
 export function VersionsDialog({ target, onClose }: { target: GetTarget; onClose: () => void }) {
-  const get = useGetAndWatch();
-  const [state, setState] = useState<{ loading: boolean; list: Release[]; error?: string }>({ loading: true, list: [] });
-  const { releases } = get;
+  const { deps } = useGetAndWatch();
+  return <VersionsPanel target={target} deps={deps} onClose={onClose} />;
+}
+
+const sorts: { id: ReleaseSort; name: string }[] = [{ id: "seeders", name: "Most seeders" }, { id: "quality", name: "Best quality" }, { id: "size", name: "Largest" }];
+
+function VersionsPanel({ target, deps, onClose }: { target: GetTarget; deps: VersionsDeps; onClose: () => void }) {
+  const settings = useSettings();
+  const [snapshot, setSnapshot] = useState<ReleaseSnapshot>({ releases: [], failures: [], pending: [] });
+  const [started, setStarted] = useState(false);
+  const [error, setError] = useState<string>();
+  const [resolution, setResolution] = useState<number | null>(settings.defaultResolution);
+  const [sort, setSort] = useState<ReleaseSort>("seeders");
+  const [sending, setSending] = useState<string>();
+  const closeButton = useRef<HTMLButtonElement>(null);
+
   useEffect(() => {
-    let live = true;
-    releases(target)
-      .then((list) => live && setState({ loading: false, list: [...list].sort((a, b) => (b.parsed.resolution - a.parsed.resolution) || ((b.seeders ?? 0) - (a.seeders ?? 0))) }))
-      .catch((error) => live && setState({ loading: false, list: [], error: error instanceof Error ? error.message : "Search failed." }));
-    return () => { live = false; };
+    const controller = new AbortController();
+    deps.search(target, (s) => { setStarted(true); setSnapshot(s); }, controller.signal)
+      .catch((e) => { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : "Search failed."); });
+    return () => controller.abort();
     // One search per opened dialog.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const heading = target.episode !== undefined ? `${target.item.title} · S${target.season} E${target.episode}` : target.season !== undefined ? `${target.item.title} · Season ${target.season}` : target.item.title;
+
+  useEffect(() => {
+    closeButton.current?.focus();
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const resolutions = useMemo(() => {
+    const found = new Set<number>(snapshot.releases.map((r) => r.parsed.resolution).filter((r) => r > 0));
+    if (resolution !== null) found.add(resolution);
+    return [...found].sort((a, b) => b - a);
+  }, [snapshot.releases, resolution]);
+  const count = (r: number) => snapshot.releases.filter((x) => x.parsed.resolution === r).length;
+  const rows = useMemo(
+    () => sortReleases(resolution === null ? snapshot.releases : snapshot.releases.filter((r) => r.parsed.resolution === resolution), sort),
+    [snapshot.releases, resolution, sort],
+  );
+
+  const searching = !error && (!started || snapshot.pending.length > 0);
+  const allFailed = !searching && !snapshot.releases.length && snapshot.failures.length > 0;
+  const heading = target.text ? `“${target.text}”` : target.episode !== undefined ? `${target.item.title} · S${target.season} E${target.episode}` : target.season !== undefined ? `${target.item.title} · Season ${target.season}` : target.item.title;
+
+  async function get(release: Release) {
+    setSending(releaseKey(release));
+    try {
+      await deps.send(target, release);
+      onClose();
+    } catch {
+      setSending(undefined);
+    }
+  }
+
+  const settingsLink = (page: string, text: string) => (
+    <a href={`/settings?page=${page}`} onClick={(e) => { e.preventDefault(); onClose(); deps.openSettings(page); }}>{text}</a>
+  );
+
   return (
     <div className="dialog-backdrop" role="presentation" onClick={onClose}>
-      <div className="dialog" role="dialog" aria-modal="true" aria-label={`Versions of ${heading}`} onClick={(e) => e.stopPropagation()}>
+      <div className="dialog versions-dialog" role="dialog" aria-modal="true" aria-label={`Versions of ${heading}`} onClick={(e) => e.stopPropagation()}>
         <div className="dialog-head">
           <div>
             <div className="eyebrow">CHOOSE A VERSION</div>
             <h2>{heading}</h2>
           </div>
-          <button type="button" className="icon-button" aria-label="Close" onClick={onClose}><CloseIcon /></button>
+          <button ref={closeButton} type="button" className="icon-button" aria-label="Close" onClick={onClose}><CloseIcon /></button>
         </div>
-        {state.loading && <p className="muted">Searching…</p>}
-        {state.error && <p className="error-text">{state.error}{!get.canGet && <> <Link to="/settings">Open Settings</Link></>}</p>}
-        {!state.loading && !state.error && !state.list.length && <p className="muted">No versions found.</p>}
+
+        <div className="versions-controls">
+          <div className="chips versions-chips" role="group" aria-label="Quality">
+            <button type="button" className="chip" aria-pressed={resolution === null} onClick={() => setResolution(null)}>All{snapshot.releases.length ? ` · ${snapshot.releases.length}` : ""}</button>
+            {resolutions.map((r) => (
+              <button key={r} type="button" className="chip" aria-pressed={resolution === r} onClick={() => setResolution(r)}>{qualityName(r)} · {count(r)}</button>
+            ))}
+          </div>
+          <label className="versions-sort">
+            <span className="visually-hidden">Sort versions</span>
+            <select className="select" value={sort} onChange={(e) => setSort(e.target.value as ReleaseSort)}>
+              {sorts.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </label>
+        </div>
+
+        <div className="versions-status muted small" role="status" aria-live="polite">
+          {searching && <span>Searching {snapshot.pending.length ? snapshot.pending.map((id) => sourceNames[id]).join(", ") : "every source"}…</span>}
+          {!searching && snapshot.failures.length > 0 && !allFailed && <span>{snapshot.failures.map((f) => f.message).join(" ")}</span>}
+        </div>
+
+        {error && <p className="error-text">{error} {settingsLink("sources", "Open Settings")}</p>}
+        {allFailed && <p className="error-text">{snapshot.failures.map((f) => f.message).join(" ")} {settingsLink("sources", "Check sources")}</p>}
+        {!searching && !error && !allFailed && !snapshot.releases.length && <p className="muted">No versions found.</p>}
+        {!searching && resolution !== null && snapshot.releases.length > 0 && !rows.length && (
+          <p className="muted">None in {qualityName(resolution)} yet. <button type="button" className="link-button" onClick={() => setResolution(null)}>Show all</button></p>
+        )}
+
         <ul className="versions">
-          {state.list.map((r) => (
-            <li key={r.link}>
-              <div className="version-main">
-                <div className="version-tags">
-                  {resolutionLabel(r.parsed.resolution) && <span className="tag tag-strong">{resolutionLabel(r.parsed.resolution)}</span>}
-                  {r.parsed.source && <span className="tag">{r.parsed.source}</span>}
-                  {r.parsed.codec && <span className="tag">{r.parsed.codec}</span>}
-                  {r.parsed.hdr.map((h) => <span key={h} className="tag">{h}</span>)}
+          {rows.map((r) => {
+            const key = releaseKey(r);
+            return (
+              <li key={key}>
+                <div className="version-main">
+                  <div className="version-tags">
+                    {resolutionLabel(r.parsed.resolution) && <span className="tag tag-strong">{resolutionLabel(r.parsed.resolution)}</span>}
+                    {r.parsed.source && <span className="tag">{r.parsed.source}</span>}
+                    {r.parsed.codec && <span className="tag">{r.parsed.codec}</span>}
+                    {r.parsed.hdr.map((h) => <span key={h} className="tag">{h}</span>)}
+                    {r.parsed.audio && <span className="tag">{r.parsed.audio}</span>}
+                  </div>
+                  <div className="version-name">{r.name}</div>
+                  <div className="version-meta small">
+                    {r.sizeBytes !== undefined && <span>{bytes(r.sizeBytes)}</span>}
+                    {r.seeders !== undefined && <span className={r.seeders > 0 ? "version-seeders" : "version-dead"}>{r.seeders} seeders</span>}
+                    {r.sources.map((s) => <span key={s} className="version-source">{s}</span>)}
+                  </div>
                 </div>
-                <div className="version-name">{r.name}</div>
-                <div className="muted small">{[bytes(r.sizeBytes), r.seeders !== undefined ? `${r.seeders} seeders` : undefined, r.source].filter(Boolean).join(" · ")}</div>
-              </div>
-              <button type="button" className="pill pill-primary" onClick={() => { void get.send(target, r).then(onClose, () => {}); }}>Get</button>
-            </li>
-          ))}
+                <button type="button" className="pill pill-primary pill-small" disabled={sending !== undefined} aria-label={`Get ${r.name}`} onClick={() => void get(r)}>
+                  {sending === key ? "Sending…" : "Get"}
+                </button>
+              </li>
+            );
+          })}
         </ul>
       </div>
     </div>

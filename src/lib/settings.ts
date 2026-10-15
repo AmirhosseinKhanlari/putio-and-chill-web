@@ -1,10 +1,11 @@
 /** The app's settings (the iPhone app's AppSettings, minus what only a device can do), saved in this browser.
  * Read them with useSettings(); outside React, loadSettings(). */
-import { useSyncExternalStore } from "react";
+import { useSyncExternalStore, type CSSProperties } from "react";
+import type { SourceID } from "../api/sources/types";
 import { keys, readJSON, writeJSON } from "./storage";
 
 export interface SourceConfig {
-  id: "chill" | "yts" | "eztv" | "apibay" | "knaben" | "torrentscsv";
+  id: SourceID;
   name: string;
   enabled: boolean;
 }
@@ -94,6 +95,8 @@ function load(): AppSettings {
   // The first web build kept only { resolution }.
   if (saved.resolution && !saved.smartGet) merged.smartGet = { ...defaultSettings.smartGet, resolution: saved.resolution };
   merged.sources = defaultSources.map((d) => ({ ...d, enabled: saved.sources?.find((s) => s.id === d.id)?.enabled ?? d.enabled }));
+  // As in the iPhone app: never more often than every 5 minutes.
+  merged.libraryUpdateMinutes = Math.max(5, Number(merged.libraryUpdateMinutes) || defaultSettings.libraryUpdateMinutes);
   return merged;
 }
 
@@ -113,3 +116,37 @@ export function useSettings(): AppSettings {
 }
 
 export const isSourceEnabled = (s: AppSettings, id: SourceConfig["id"]) => s.sources.some((x) => x.id === id && x.enabled);
+
+/** The languages offered for audio and subtitles (the iPhone app's list). */
+export const languages: { code: string; name: string }[] = [
+  { code: "en", name: "English" }, { code: "fa", name: "Persian (فارسی)" }, { code: "es", name: "Spanish" },
+  { code: "fr", name: "French" }, { code: "de", name: "German" }, { code: "it", name: "Italian" },
+  { code: "pt", name: "Portuguese" }, { code: "ru", name: "Russian" }, { code: "ar", name: "Arabic" },
+  { code: "tr", name: "Turkish" }, { code: "ja", name: "Japanese" }, { code: "ko", name: "Korean" },
+  { code: "zh", name: "Chinese" }, { code: "hi", name: "Hindi" },
+];
+
+export const languageName = (code: string | null) => (code ? languages.find((l) => l.code === code)?.name.split(" (")[0] ?? code : null);
+
+/** "8K", "4K", "1080p"; "Best" for null. */
+export const qualityName = (r: number | null) => (r === null ? "Best" : r === 4320 ? "8K" : r === 2160 ? "4K" : `${r}p`);
+
+/** How subtitles look with this style, for the player's captions and the preview in Settings. Sizes are relative
+ * to the player's height where the player sets --subtitle-base (default 22px). */
+export function subtitleStyleCSS(style: SubtitleStyle): CSSProperties {
+  const size = { small: 0.8, medium: 1, large: 1.3, extraLarge: 1.65 }[style.size];
+  const color = { white: "#ffffff", yellow: "#ffe14d", cyan: "#5ee7ff", green: "#5dff8a" }[style.color];
+  const fontFamily = {
+    standard: "system-ui, -apple-system, 'Segoe UI', sans-serif",
+    rounded: "ui-rounded, 'SF Pro Rounded', 'Nunito', system-ui, sans-serif",
+    serif: "ui-serif, Georgia, 'Times New Roman', serif",
+    monospaced: "ui-monospace, 'SF Mono', Menlo, Consolas, monospace",
+  }[style.typeface];
+  const background = { none: "transparent", translucent: "rgba(0, 0, 0, 0.6)", solid: "#000000" }[style.background];
+  return {
+    color, fontFamily, backgroundColor: background,
+    fontSize: `calc(var(--subtitle-base, 22px) * ${size})`,
+    // Without a box, an outline keeps the words readable on bright scenes.
+    textShadow: style.background === "none" ? "0 0 3px #000, 0 0 3px #000, 0 1px 2px #000" : undefined,
+  };
+}

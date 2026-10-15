@@ -1,0 +1,71 @@
+/* Lists on Home, Movies, TV, Coming Up and the "See all" pages: ranked chart rows, box office, dated posters. Built on
+   the tokens in styles.css. */
+
+/* A row waiting to load holds its place so the page doesn't jump. */
+.lists-slot { height: calc(var(--poster) * 1.5 + 58px); }
+.lists-chart { display: flex; flex-direction: column; gap: 8px; }
+.lists-credit { margin: 0; font-size: 11px; color: rgba(255, 255, 255, 0.4); }
+.lists-note { margin: 0; }
+.lists-head { gap: 14px; }
+.lists-segmented { align-self: flex-start; max-width: 360px; }
+.lists-more { display: flex; justify-content: center; padding: 8px 0; }
+.lists-date { font-size: 12px; font-weight: 600; color: rgba(255, 255, 255, 0.75); font-variant-numeric: tabular-nums; }
+.lists-day { margin: 8px 0 0; font-size: 12px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(255, 255, 255, 0.6); }
+.lists-grid-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+@media (max-width: 560px) { .lists-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 20px 10px; } }
+
+/* IMDb Top 250 row: a big rank numeral behind each poster's left edge. */
+.ranked-card { flex: none; display: flex; align-items: flex-end; text-decoration: none; color: inherit; }
+.ranked-card .poster { flex: none; width: var(--poster); z-index: 1; }
+.ranked-card:hover .poster { transform: scale(1.03); }
+.ranked-number {
+  min-width: calc(var(--poster) * 0.45);
+  margin-right: calc(var(--poster) * -0.18);
+  transform: translateY(calc(var(--poster) * 0.1));
+  font-family: ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  font-size: calc(var(--poster) * 0.8);
+  font-weight: 800;
+  line-height: 0.8;
+  letter-spacing: -0.06em;
+  text-align: right;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.35));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.6));
+  user-select: none;
+}
+
+/* IMDb Top 250 page */
+.chart-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; max-width: 900px; }
+.chart-row { display: flex; align-items: center; gap: 18px; padding: 14px; border-radius: 16px; background: rgba(255, 255, 255, 0.05); text-decoration: none; color: inherit; }
+a.chart-row:hover { background: rgba(255, 255, 255, 0.09); }
+.chart-row > svg { flex: none; color: rgba(255, 255, 255, 0.3); }
+.chart-rank { flex: none; width: 76px; text-align: right; font-family: ui-rounded, "SF Pro Rounded", system-ui, sans-serif; font-size: 40px; font-weight: 800; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.85); }
+/* Gold, silver and bronze for the podium. */
+.chart-rank-1, .chart-rank-2, .chart-rank-3 { -webkit-background-clip: text; background-clip: text; color: transparent; }
+.chart-rank-1 { background-image: linear-gradient(180deg, #ffdb66, #d99926); }
+.chart-rank-2 { background-image: linear-gradient(180deg, #e6ebf2, #99a3b3); }
+.chart-rank-3 { background-image: linear-gradient(180deg, #f2ad73, #b36b38); }
+.chart-poster { flex: none; width: 84px; }
+.chart-poster .poster { border-radius: 8px; }
+.chart-poster .poster-fallback, .box-office-poster .poster-fallback { padding: 6px; font-size: 11px; }
+.chart-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.chart-title { font-size: 19px; font-weight: 600; }
+.chart-overview { margin: 0; font-size: 13px; line-height: 1.4; color: rgba(255, 255, 255, 0.6); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+@media (max-width: 640px) {
+  .chart-row { gap: 12px; padding: 10px; }
+  .chart-rank { width: 44px; font-size: 26px; }
+  .chart-poster { width: 58px; }
+  .chart-title { font-size: 16px; }
+  .chart-overview { display: none; }
+}
+
+/* Box office */
+.box-office { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 10px; }
+.box-office-row { display: flex; align-items: center; gap: 14px; padding: 8px; border-radius: 12px; background: rgba(255, 255, 255, 0.04); text-decoration: none; color: inherit; }
+.box-office-row:hover { background: rgba(255, 255, 255, 0.09); }
+.box-office-rank { flex: none; width: 34px; text-align: center; font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.box-office-poster { flex: none; width: 44px; }
+.box-office-poster .poster { border-radius: 6px; }
+.box-office-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }

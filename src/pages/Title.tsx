@@ -10,6 +10,8 @@ import { left as leftLabel, runtime } from "../lib/format";
 import type { LibraryEntry } from "../lib/library";
 import { useLibrary, useMyList } from "../state/hooks";
 import { CatalogShelf } from "./Home";
+// Cast & Crew links share the person page's styles.
+import "../styles/person.css";
 
 export function Title() {
   const { kind, id } = useParams<{ kind: MediaKind; id: string }>();
@@ -83,11 +85,11 @@ function TitleView({ detail }: { detail: TitleDetail }) {
             <div className="shelf-head"><h2>Cast &amp; Crew</h2></div>
             <div className="cast">
               {detail.cast.map((c) => (
-                <div key={`${c.id}-${c.role}`} className="cast-member">
-                  {c.profilePath ? <img src={image(c.profilePath, "w185")} alt="" loading="lazy" /> : <div className="cast-fallback">{initials(c.name)}</div>}
+                <Link key={`${c.id}-${c.role}`} to={`/person/${c.id}`} className="cast-member">
+                  {c.profilePath ? <img src={image(c.profilePath, "w185")} alt="" loading="lazy" /> : <div className="cast-fallback" aria-hidden="true">{initials(c.name)}</div>}
                   <div className="small strong">{c.name}</div>
                   {c.role && <div className="small muted">{c.role}</div>}
-                </div>
+                </Link>
               ))}
             </div>
           </section>
