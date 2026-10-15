@@ -2,20 +2,19 @@ import { useState } from "react";
 import { chillSignInURL } from "../api/chill";
 import { TopBar } from "../components/TopBar";
 import { bytes } from "../lib/format";
-import { loadSettings, saveSettings, type Settings as AppSettings } from "../lib/smartGet";
+import { updateSettings, useSettings } from "../lib/settings";
 import { refreshLibrary, useAccount, useLibrary } from "../state/hooks";
 import { useSession } from "../state/session";
 
-const qualities: AppSettings["resolution"][] = [4320, 2160, 1080, 720, 480];
+const qualities = [4320, 2160, 1080, 720, 480];
 const qualityName = (r: number) => (r === 4320 ? "8K" : r === 2160 ? "4K" : `${r}p`);
 
 export function Settings() {
   const session = useSession();
   const account = useAccount().data;
   const lib = useLibrary();
-  const [settings, setSettings] = useState(loadSettings);
+  const settings = useSettings();
   const [pasted, setPasted] = useState("");
-  const update = (next: AppSettings) => { setSettings(next); saveSettings(next); };
   // chill.institute signs in through put.io and comes back here with the token.
   const chillURL = chillSignInURL(`${window.location.origin}/settings`);
 
@@ -50,7 +49,7 @@ export function Settings() {
               <label className="strong" htmlFor="quality">Quality</label>
               <div className="muted small">Get & Watch picks this quality with the most seeders; lower first when it's missing.</div>
             </div>
-            <select id="quality" className="select" value={settings.resolution} onChange={(e) => update({ ...settings, resolution: Number(e.target.value) as AppSettings["resolution"] })}>
+            <select id="quality" className="select" value={settings.smartGet.resolution ?? 4320} onChange={(e) => updateSettings({ smartGet: { ...settings.smartGet, resolution: Number(e.target.value) } })}>
               {qualities.map((q) => <option key={q} value={q}>{qualityName(q)}</option>)}
             </select>
           </div>

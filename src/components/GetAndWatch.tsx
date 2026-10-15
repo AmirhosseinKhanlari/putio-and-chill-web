@@ -4,7 +4,8 @@ import type { Release, ReleaseQuery } from "../api/chill";
 import type { CatalogItem } from "../api/tmdb";
 import { bytes } from "../lib/format";
 import { resolutionLabel } from "../lib/releaseName";
-import { loadSettings, pickRelease, sendToPutio } from "../lib/smartGet";
+import { loadSettings } from "../lib/settings";
+import { pickRelease, sendToPutio } from "../lib/smartGet";
 import { useToast } from "../state/hooks";
 import { useSession } from "../state/session";
 import { CloseIcon } from "./Icons";
@@ -52,7 +53,7 @@ export function useGetAndWatch() {
     setBusy(true);
     try {
       const found = await releases(target);
-      const best = pickRelease(found, loadSettings().resolution);
+      const best = pickRelease(found, loadSettings().smartGet.resolution ?? 4320);
       if (!best) { toast("No versions found. Try Versions to search more widely."); return; }
       await send(target, best);
     } catch (error) {

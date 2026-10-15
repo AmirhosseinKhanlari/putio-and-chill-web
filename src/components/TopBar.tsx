@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { bytes } from "../lib/format";
 import { useAccount } from "../state/hooks";
@@ -12,13 +13,31 @@ const tabs = [
   { to: "/library", label: "Library" },
 ];
 
-/** The app's floating tab bar; pushed pages show Back where the name is. */
+/** Scrolled past the top of the page (the bar then sticks to the top of the window). */
+function useScrolledPast(offset: number) {
+  const [past, setPast] = useState(() => window.scrollY > offset);
+  useEffect(() => {
+    const onScroll = () => setPast(window.scrollY > offset);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [offset]);
+  return past;
+}
+
+/** The app's floating tab bar; pushed pages show Back where the name is. Once the page scrolls, it slides in as a
+ * glass bar stuck to the top of the window. */
 export function TopBar({ back = false, overlay = false }: { back?: boolean; overlay?: boolean }) {
   const navigate = useNavigate();
   const account = useAccount().data;
   const name = account?.username ?? "";
+  const stuck = useScrolledPast(overlay ? 260 : 40);
+  const className = ["topbar", overlay ? "topbar-overlay" : "", stuck ? "topbar-stuck" : ""].filter(Boolean).join(" ");
   return (
-    <header className={overlay ? "topbar topbar-overlay" : "topbar"}>
+    <>
+    {/* Keeps the page from jumping when the bar leaves the flow. */}
+    {stuck && !overlay && <div className="topbar-spacer" aria-hidden="true" />}
+    <header className={className}>
       {back ? (
         <button type="button" className="icon-button" aria-label="Back" onClick={() => navigate(-1)}><ChevronLeft /></button>
       ) : (
@@ -36,5 +55,6 @@ export function TopBar({ back = false, overlay = false }: { back?: boolean; over
         </Link>
       </div>
     </header>
+    </>
   );
 }

@@ -58,6 +58,11 @@ h2 { font-size: 21px; font-weight: 600; }
 /* Top bar */
 .topbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 16px; padding: 16px var(--gutter); position: relative; z-index: 2; }
 .topbar-overlay { position: absolute; top: 0; left: 0; right: 0; }
+.topbar-spacer { height: 76px; }
+.topbar-stuck { position: fixed; top: 0; left: 0; right: 0; z-index: 12; padding-top: 10px; padding-bottom: 10px; background: rgba(10, 10, 14, 0.74); backdrop-filter: blur(24px) saturate(1.4); -webkit-backdrop-filter: blur(24px) saturate(1.4); border-bottom: 1px solid rgba(255, 255, 255, 0.08); animation: topbar-in 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.topbar-stuck .tabs { background: rgba(255, 255, 255, 0.06); }
+@keyframes topbar-in { from { transform: translateY(-100%); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .topbar-stuck { animation: none; } }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 17px; text-decoration: none; }
 .tabs { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px; padding: 5px; border-radius: 999px; background: rgba(30, 30, 38, 0.55); border: 1px solid var(--border); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); }
 .tab { padding: 9px 16px; border-radius: 999px; font-size: 14px; color: rgba(255, 255, 255, 0.78); text-decoration: none; }

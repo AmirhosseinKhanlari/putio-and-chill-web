@@ -3,20 +3,11 @@
 import type { Release } from "../api/chill";
 import type { PutioClient, PutioTransfer } from "../api/putio";
 import type { MediaKind } from "../api/tmdb";
-import type { Resolution } from "./releaseName";
-import { keys, readJSON, writeJSON } from "./storage";
-
-export interface Settings {
-  resolution: Exclude<Resolution, 0>;
-}
-
-export const defaultSettings: Settings = { resolution: 1080 };
-export const loadSettings = (): Settings => ({ ...defaultSettings, ...readJSON<Partial<Settings>>(keys.settings, {}) });
-export const saveSettings = (s: Settings) => writeJSON(keys.settings, s);
+import { readJSON, writeJSON } from "./storage";
 
 /** The preferred quality with the most seeders; else the closest lower one; else the closest higher one. Never a
  * camera recording, never a release nobody seeds (when others have seeders). */
-export function pickRelease(releases: Release[], preferred: Settings["resolution"]): Release | undefined {
+export function pickRelease(releases: Release[], preferred: number): Release | undefined {
   const usable = releases.filter((r) => r.parsed.source !== "CAM");
   const seeded = usable.filter((r) => (r.seeders ?? 0) > 0);
   const pool = seeded.length ? seeded : usable;

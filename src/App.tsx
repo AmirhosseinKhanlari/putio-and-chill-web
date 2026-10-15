@@ -6,6 +6,10 @@ import { ComingUp } from "./pages/ComingUp";
 import { Files } from "./pages/Files";
 import { Browse, Home } from "./pages/Home";
 import { Library } from "./pages/Library";
+import { ListPage } from "./pages/ListPage";
+import { Person } from "./pages/Person";
+import { Surprise } from "./pages/Surprise";
+import { Trash } from "./pages/Trash";
 import { Search } from "./pages/Search";
 import { Settings } from "./pages/Settings";
 import { SignIn } from "./pages/SignIn";
@@ -39,6 +43,10 @@ function Routed() {
       <Route path="/title/:kind/:id" element={<Title />} />
       <Route path="/play/:fileID" element={<Suspense fallback={<div className="player" />}><Player /></Suspense>} />
       <Route path="/settings" element={<Settings />} />
+      <Route path="/person/:id" element={<Person />} />
+      <Route path="/surprise" element={<Surprise />} />
+      <Route path="/trash" element={<Trash />} />
+      <Route path="/list/:source/:id" element={<ListPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

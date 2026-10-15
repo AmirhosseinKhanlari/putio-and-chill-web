@@ -57,6 +57,11 @@ export function image(path: string | null | undefined, size: "w185" | "w342" | "
   return path ? `https://image.tmdb.org/t/p/${size}${path}` : undefined;
 }
 
+/** Any TMDB v3 endpoint (for the modules that add lists, people and so on). */
+export async function tmdbGet<T>(path: string, query: Record<string, string> = {}): Promise<T> {
+  return get<T>(path, query);
+}
+
 async function get<T>(path: string, query: Record<string, string> = {}): Promise<T> {
   if (!TOKEN) throw new Error("No TMDB token: set VITE_TMDB_TOKEN in .env.local.");
   const url = new URL(`${BASE}/${path}`);
@@ -66,7 +71,7 @@ async function get<T>(path: string, query: Record<string, string> = {}): Promise
   return response.json() as Promise<T>;
 }
 
-interface RawItem {
+export interface RawItem {
   id: number;
   media_type?: string;
   title?: string;
@@ -91,7 +96,7 @@ function item(raw: RawItem, kind?: MediaKind): CatalogItem | undefined {
   };
 }
 
-const items = (raws: RawItem[], kind?: MediaKind) => raws.map((r) => item(r, kind)).filter((i): i is CatalogItem => Boolean(i));
+export const items = (raws: RawItem[], kind?: MediaKind) => raws.map((r) => item(r, kind)).filter((i): i is CatalogItem => Boolean(i));
 
 export const tmdb = {
   async trending(kind: MediaKind | "all" = "all"): Promise<CatalogItem[]> {

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { tmdb, type CatalogItem, type MediaKind } from "../api/tmdb";
-import { EntryCard, PosterCard, titlePath } from "../components/Cards";
+import { EntryCard, PosterCard } from "../components/Cards";
 import { Hero } from "../components/Hero";
 import { DiceIcon } from "../components/Icons";
 import { Shelf } from "../components/Shelf";
@@ -35,11 +35,7 @@ export function Home() {
   const continueWatching = lib.continueWatching();
   const recent = lib.recentlyAdded();
 
-  function surprise() {
-    const pool = [...(trending.data ?? []), ...(movies.data ?? []), ...(shows.data ?? [])].filter((i) => (i.rating ?? 0) >= 7);
-    const pick = pool[Math.floor(Math.random() * pool.length)];
-    if (pick) navigate(titlePath(pick));
-  }
+  const surprise = () => navigate("/surprise");
 
   return (
     <div className="page">
