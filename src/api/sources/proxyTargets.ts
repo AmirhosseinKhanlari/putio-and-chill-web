@@ -20,6 +20,16 @@ export const proxyTargets = {
   imdb: { base: "https://api.graphql.imdb.com", headers: ["x-imdb-client-name", "x-imdb-user-country", "x-imdb-user-language"] },
   /** Latest-movies and latest-shows pages (HTML), read by the lists pages. */
   mymoviz: { base: "https://mymoviz.co", methods: ["GET", "HEAD"] },
+  /** Search and detail pages (HTML). It's a browser site, so the proxy asks like a browser; lowercase keys replace
+   * the browser's own Accept. */
+  torrentgalaxy: {
+    base: "https://torrentgalaxy.info",
+    methods: ["GET", "HEAD"],
+    fixed: {
+      "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+      accept: "text/html,application/xhtml+xml",
+    },
+  },
 } satisfies Record<string, ProxyTarget>;
 
 export type ProxyName = keyof typeof proxyTargets;

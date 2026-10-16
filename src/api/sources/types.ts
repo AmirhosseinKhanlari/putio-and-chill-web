@@ -2,7 +2,7 @@
  * ReleaseRelevance). */
 import type { ParsedRelease } from "../../lib/releaseName";
 
-export type SourceID = "chill" | "yts" | "eztv" | "apibay" | "knaben" | "torrentscsv";
+export type SourceID = "chill" | "yts" | "eztv" | "apibay" | "knaben" | "torrentscsv" | "torrentgalaxy";
 
 export interface Release {
   name: string;
@@ -75,8 +75,8 @@ export class SourceError extends Error {
   }
 }
 
-/** fetch + JSON with one readable error per source. */
-export async function fetchJSON<T>(source: SourceID, url: string, init: RequestInit = {}): Promise<T> {
+/** fetch with one readable error per source; only answers in the 200s come back. */
+async function fetchOK(source: SourceID, url: string, init: RequestInit): Promise<Response> {
   let response: Response;
   try {
     response = await fetch(url, init);
@@ -85,9 +85,30 @@ export async function fetchJSON<T>(source: SourceID, url: string, init: RequestI
     throw new SourceError(source, "couldn't be reached");
   }
   if (!response.ok) throw new SourceError(source, `answered ${response.status}`);
+  return response;
+}
+
+/** fetch + JSON with one readable error per source. */
+export async function fetchJSON<T>(source: SourceID, url: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetchOK(source, url, init);
   try {
     return (await response.json()) as T;
   } catch {
     throw new SourceError(source, "sent something unreadable");
   }
+}
+
+/** fetch + text (HTML pages), with the same errors as fetchJSON. */
+export async function fetchText(source: SourceID, url: string, init: RequestInit = {}): Promise<string> {
+  return (await fetchOK(source, url, init)).text();
+}
+
+/** AbortSignal.any, for browsers that don't have it yet. */
+export function anySignal(signals: AbortSignal[]): AbortSignal {
+  const controller = new AbortController();
+  for (const s of signals) {
+    if (s.aborted) { controller.abort(s.reason); break; }
+    s.addEventListener("abort", () => controller.abort(s.reason), { once: true });
+  }
+  return controller.signal;
 }

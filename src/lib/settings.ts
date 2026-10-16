@@ -66,6 +66,7 @@ export const defaultSources: SourceConfig[] = [
   { id: "apibay", name: "The Pirate Bay (apibay)", enabled: true },
   { id: "knaben", name: "Knaben", enabled: true },
   { id: "torrentscsv", name: "Torrents.csv", enabled: true },
+  { id: "torrentgalaxy", name: "TorrentGalaxy", enabled: true },
 ];
 
 export const defaultSettings: AppSettings = {

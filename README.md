@@ -11,8 +11,8 @@ npm run dev                  # http://localhost:5173
 ```
 
 Sign in with put.io: the app shows a short code, you enter it at put.io/link. Get & Watch and Versions search the
-torrent sources turned on in Settings → Sources (YTS, EZTV, The Pirate Bay, Knaben, Torrents.csv); connecting
-chill.institute in Settings → Connected Services adds its indexers too, but nothing needs it.
+torrent sources turned on in Settings → Sources (YTS, EZTV, The Pirate Bay, Knaben, Torrents.csv, TorrentGalaxy);
+connecting chill.institute in Settings → Connected Services adds its indexers too, but nothing needs it.
 
 ## Check it
 
@@ -28,7 +28,8 @@ npm run build      # static site in dist/
 - `src/api/sources/` — the torrent sources, one module each (ports of the iPhone app's providers), and `index.ts`, the
   aggregator: every source that's on is asked in parallel (12 s each), magnet links are built from info-hashes, the
   same torrent from several sources becomes one row (most seeders wins), and results are filtered to the episode,
-  season pack or movie asked for.
+  season pack or movie asked for. TorrentGalaxy is read from its HTML pages: its search list has no info-hashes, so
+  the detail pages of the best 8 matches are read for theirs (4 at a time); pages it redirects away are skipped.
 - `src/lib/library.ts` — reads every folder in put.io, matches each video to TMDB (once per name), and keeps watch
   positions and video lengths for the watched bars. Ported from the iPhone app's LibraryIndex.
 - `src/lib/releaseName.ts`, `src/lib/matcher.ts`, `src/lib/smartGet.ts` — release-name parsing, title matching and
@@ -43,12 +44,13 @@ npm run build      # static site in dist/
 
 ## The proxy
 
-Some services don't allow browser requests (apibay.org, api.knaben.org, OpenSubtitles, IMDb's GraphQL API, mymoviz.co),
-so the site has a small same-origin proxy: `/proxy/<name>/<path>` goes to that name's address in
-`src/api/sources/proxyTargets.ts`, and nowhere else. Only GET/HEAD/POST (GET/HEAD for mymoviz) and a few headers
-(Accept, Accept-Language, Content-Type, Authorization, plus each target's own) are passed on; cookies, origin and
-referrer are not, and only the body, status and content type come back. `/proxy/opensubtitles/file?url=…` fetches one
-subtitle file, only from https links on opensubtitles.com / opensubtitles.org (400 otherwise).
+Some services don't allow browser requests (apibay.org, api.knaben.org, OpenSubtitles, IMDb's GraphQL API, mymoviz.co,
+torrentgalaxy.info), so the site has a small same-origin proxy: `/proxy/<name>/<path>` goes to that name's address in
+`src/api/sources/proxyTargets.ts`, and nowhere else. Only GET/HEAD/POST (GET/HEAD for mymoviz and torrentgalaxy)
+and a few headers (Accept, Accept-Language, Content-Type, Authorization, plus each target's own) are passed on;
+cookies, origin and referrer are not, and only the body, status and content type come back. torrentgalaxy is a browser
+site, so the proxy sends it a browser User-Agent and Accept. `/proxy/opensubtitles/file?url=…` fetches one subtitle
+file, only from https links on opensubtitles.com / opensubtitles.org (400 otherwise).
 
 - In development, `vite.config.ts` sets this up on the dev server (restart it after changing the list).
 - In production, `functions/proxy/[[path]].ts` is a Cloudflare Pages Function doing the same.
@@ -58,8 +60,8 @@ To add a service, add a name and base address to `proxyTargets` (and any headers
 ## Deploying
 
 `npm run build` makes a static site in `dist/`; `public/_redirects` sends every path to the app. Deploy to Cloudflare
-Pages so `functions/` runs too (without it, The Pirate Bay, Knaben, OpenSubtitles search and the IMDb lists fail and
-the other sources still work). Set `VITE_TMDB_TOKEN` in the host's build settings.
+Pages so `functions/` runs too (without it, The Pirate Bay, Knaben, TorrentGalaxy, OpenSubtitles search and the IMDb
+lists fail and the other sources still work). Set `VITE_TMDB_TOKEN` in the host's build settings.
 
 Note: `VITE_` values are built into the page, so anyone can read the TMDB token from a deployed site. TMDB read tokens
 are meant for apps like this, but use a token made for the web app (not the iPhone app's) so it can be replaced on its

@@ -5,16 +5,18 @@ import type { AppSettings } from "../../lib/settings";
 import { apibay } from "./apibay";
 import { eztv } from "./eztv";
 import { knaben } from "./knaben";
+import { torrentGalaxy } from "./torrentgalaxy";
 import { torrentsCSV } from "./torrentscsv";
-import { SourceError, type Release, type ReleaseQuery, type SourceID, type SourceProvider } from "./types";
+import { anySignal, SourceError, type Release, type ReleaseQuery, type SourceID, type SourceProvider } from "./types";
 import { yts } from "./yts";
 
 export type { Release, ReleaseQuery, SourceID, SourceProvider } from "./types";
 
-const direct: Record<Exclude<SourceID, "chill">, SourceProvider> = { yts, eztv, apibay, knaben, torrentscsv: torrentsCSV };
+const direct: Record<Exclude<SourceID, "chill">, SourceProvider> = { yts, eztv, apibay, knaben, torrentscsv: torrentsCSV, torrentgalaxy: torrentGalaxy };
 
 export const sourceNames: Record<SourceID, string> = {
   chill: "chill.institute", yts: "YTS", eztv: "EZTV", apibay: "The Pirate Bay", knaben: "Knaben", torrentscsv: "Torrents.csv",
+  torrentgalaxy: "TorrentGalaxy",
 };
 
 /** The sources to ask: those turned on, in Settings' order; chill.institute only when it's connected. */
@@ -106,14 +108,4 @@ export async function searchReleases(
     options.onUpdate?.(snapshot);
   }));
   return snapshot;
-}
-
-/** AbortSignal.any, for browsers that don't have it yet. */
-function anySignal(signals: AbortSignal[]): AbortSignal {
-  const controller = new AbortController();
-  for (const s of signals) {
-    if (s.aborted) { controller.abort(s.reason); break; }
-    s.addEventListener("abort", () => controller.abort(s.reason), { once: true });
-  }
-  return controller.signal;
 }

@@ -77,6 +77,7 @@ const sourceAbout: Record<SourceConfig["id"], string> = {
   apibay: "Movies and TV. Through this site's proxy.",
   knaben: "Searches many trackers at once. Through this site's proxy.",
   torrentscsv: "Movies and TV from a public torrent index.",
+  torrentgalaxy: "Movies and TV. Reads the site's pages through this site's proxy.",
 };
 
 export function SourcesPage() {
@@ -218,7 +219,7 @@ export function AboutPage() {
     <Group>
       <div className="settings-item settings-prose">
         <p><span className="strong">Putio & Chill</span> for the web: pick a movie or show, send it to put.io, and watch it in the browser.</p>
-        <p className="muted small">Movie and show data from TMDB. Releases from the sources turned on in Settings → Sources; YTS, EZTV, Torrents.csv and chill.institute are asked directly, The Pirate Bay and Knaben through this site's small proxy (it only reaches those services). Videos stream from your put.io.</p>
+        <p className="muted small">Movie and show data from TMDB. Releases from the sources turned on in Settings → Sources; YTS, EZTV, Torrents.csv and chill.institute are asked directly, The Pirate Bay, Knaben and TorrentGalaxy through this site's small proxy (it only reaches those services). Videos stream from your put.io.</p>
         <p className="muted small">Your put.io and chill.institute sign-ins, API keys and settings are kept only in this browser.</p>
       </div>
     </Group>
