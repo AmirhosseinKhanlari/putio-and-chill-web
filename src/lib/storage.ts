@@ -39,6 +39,7 @@ export const keys = {
   library: "pc.library.v1",
   matches: "pc.matches.v1",
   durations: "pc.durations.v1",
+  positions: "pc.positions.v1",
   settings: "pc.settings.v1",
   myList: "pc.mylist.v1",
   recentSearches: "pc.search.recent.v1",

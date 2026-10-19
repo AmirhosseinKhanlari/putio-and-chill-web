@@ -5,6 +5,7 @@ import { isFolder, isVideo, type PutioClient, type PutioFile } from "../api/puti
 import type { MediaKind } from "../api/tmdb";
 import { includesTopLevelFolder, scopeSignature, standardScope, type LibraryScope } from "./libraryScope";
 import { normalizeTitle, pickMatch } from "./matcher";
+import { deviceSave, mergePosition, putioRead, samePosition, type Position } from "./positions";
 import { parseReleaseName } from "./releaseName";
 import { keys, readJSON, writeJSON } from "./storage";
 
@@ -36,6 +37,8 @@ interface Snapshot {
   updatedAt: number;
   /** scopeSignature of the walk that found these (absent in older caches, which read all of put.io). */
   scope?: string;
+  /** Older builds' positions saved here, by file id (now in keys.positions). */
+  progress?: Record<string, number>;
 }
 
 type CachedMatch = Omit<LibraryMatch, "season" | "episode"> | null;
@@ -43,6 +46,8 @@ type Searcher = (kind: MediaKind, title: string, year?: number) => Promise<{ tmd
 
 const SKIPPED_FOLDERS = new Set(["subs", "subtitles", "sub", "sample", "samples", "screens", "screenshots", "proof", "artwork", "covers"]);
 const MAX_FOLDERS = 2000;
+/** A position for a file no longer in the library is kept this long (unless put.io doesn't have it yet). */
+const KEEP_GONE_POSITIONS_MS = 60 * 24 * 60 * 60_000;
 
 /** "Season 2" / "S02" folders: the season, and the show from the folder above it. */
 function seasonOfFolder(name: string): number | undefined {
@@ -71,7 +76,7 @@ export class LibraryIndex {
   private snapshot: Snapshot = readJSON<Snapshot>(keys.library, { entries: [], updatedAt: 0 });
   private matches = readJSON<Record<string, CachedMatch>>(keys.matches, {});
   private durations = readJSON<Record<string, number>>(keys.durations, {});
-  private progress: Record<number, number> = {};
+  private positions = this.loadPositions();
   private lookups = new Map<string, Promise<CachedMatch | undefined>>();
   private listeners = new Set<() => void>();
   private refreshing?: Promise<void>;
@@ -97,7 +102,9 @@ export class LibraryIndex {
 
   // MARK: Reading
 
-  resumeSeconds(entry: LibraryEntry): number { return this.progress[entry.id] ?? entry.startFrom ?? 0; }
+  resumeSeconds(entry: LibraryEntry): number { return this.positions[entry.id]?.seconds ?? entry.startFrom ?? 0; }
+
+  position(fileID: number): Position | undefined { return this.positions[fileID]; }
 
   matching(tmdbID: number, season?: number, episode?: number): LibraryEntry[] {
     return this.entries.filter((e) => e.match?.tmdbID === tmdbID
@@ -105,12 +112,17 @@ export class LibraryIndex {
       && (episode === undefined || e.match.episode === episode));
   }
 
+  /** Started videos, last watched (anywhere) first; when that's unknown, by put.io's last change. */
+  private started(): LibraryEntry[] {
+    const watched = (e: LibraryEntry) => this.positions[e.id]?.watchedAt ?? -1;
+    return this.entries.filter((e) => this.resumeSeconds(e) >= 30)
+      .sort((a, b) => watched(b) - watched(a) || (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+  }
+
   /** Started videos, latest first, one per show (its latest started episode). */
   continueWatching(): LibraryEntry[] {
-    const started = this.entries.filter((e) => this.resumeSeconds(e) >= 30)
-      .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
     const seen = new Set<string>();
-    return started.filter((e) => {
+    return this.started().filter((e) => {
       const key = e.match?.kind === "tv" ? `tv-${e.match.tmdbID}` : `f-${e.id}`;
       if (seen.has(key)) return false;
       seen.add(key);
@@ -146,17 +158,59 @@ export class LibraryIndex {
     return length - position;
   }
 
-  // MARK: Writing (from the player)
+  /** Whose positions to read from put.io when the app comes to the front: the started ones (last watched first),
+   * then the latest changed videos, where another device may have started something new. */
+  positionCandidates(limit = 30): number[] {
+    const changed = [...this.entries].sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+    return [...new Set([...this.started(), ...changed].map((e) => e.id))].slice(0, limit);
+  }
 
-  noteProgress(fileID: number, seconds: number, duration?: number) {
-    this.progress[fileID] = Math.floor(seconds);
+  /** Files saved here that put.io doesn't have yet. */
+  pendingPositions(): number[] {
+    return Object.entries(this.positions).filter(([, p]) => p.pending).map(([id]) => Number(id));
+  }
+
+  // MARK: Writing
+
+  /** The player's position (0 when watched to the end): newest, so it wins, and pending until put.io has it. */
+  noteProgress(fileID: number, seconds: number, duration?: number): Position {
     if (duration && Number.isFinite(duration) && duration > 0 && this.durations[fileID] !== Math.floor(duration)) {
       this.durations[fileID] = Math.floor(duration);
       writeJSON(keys.durations, this.durations);
     }
-    const entry = this.entries.find((e) => e.id === fileID);
-    if (entry) entry.updatedAt = new Date().toISOString();
+    return this.takePosition(fileID, deviceSave(Math.floor(seconds), Date.now()));
+  }
+
+  /** put.io's position from a read that started at `readAt`. A changed value means it was watched since; 0 is kept
+   * too (finished elsewhere: out of Continue Watching). */
+  notePutioPosition(fileID: number, seconds: number, readAt: number): Position {
+    return this.takePosition(fileID, putioRead(Math.floor(seconds), readAt, seconds > 0 ? readAt : undefined));
+  }
+
+  /** put.io took the save stamped `at` (a newer one made meanwhile stays pending). */
+  markSent(fileID: number, at: number) {
+    const current = this.positions[fileID];
+    if (current?.pending && current.at === at) this.setPosition(fileID, { ...current, pending: false });
+  }
+
+  private takePosition(fileID: number, incoming: Position): Position {
+    const next = mergePosition(this.positions[fileID], incoming);
+    if (!samePosition(this.positions[fileID], next)) this.setPosition(fileID, next);
+    return next;
+  }
+
+  private setPosition(fileID: number, position: Position) {
+    this.positions = { ...this.positions, [fileID]: position };
+    writeJSON(keys.positions, this.positions);
     this.emit();
+  }
+
+  /** Saved positions, or (once) the ones an older build kept in the library cache. */
+  private loadPositions(): Record<number, Position> {
+    const saved = readJSON<Record<number, Position> | null>(keys.positions, null);
+    if (saved) return saved;
+    const old = Object.entries(this.snapshot.progress ?? {});
+    return Object.fromEntries(old.map(([id, seconds]) => [id, { seconds, at: this.snapshot.updatedAt, source: "device", pending: false } satisfies Position]));
   }
 
   forget(ids: number[]) {
@@ -168,8 +222,9 @@ export class LibraryIndex {
 
   clear() {
     this.snapshot = { entries: [], updatedAt: 0 };
-    this.progress = {};
+    this.positions = {};
     writeJSON(keys.library, this.snapshot);
+    writeJSON(keys.positions, this.positions);
     this.emit();
   }
 
@@ -189,6 +244,8 @@ export class LibraryIndex {
 
   private async run(putio: PutioClient, search: Searcher, scope: LibraryScope) {
     this.isRefreshing = true;
+    const startedAt = Date.now();
+    const refreshedBefore = this.snapshot.updatedAt > 0;
     this.lookups.clear();
     this.progressText = "Reading your put.io…";
     this.emit();
@@ -214,11 +271,23 @@ export class LibraryIndex {
       }
     };
     await Promise.all(Array.from({ length: 4 }, worker));
-    // Positions saved in this session stay until put.io has them too.
-    for (const e of entries) if (this.progress[e.id] !== undefined && e.startFrom === this.progress[e.id]) delete this.progress[e.id];
+    this.notePositionsFromList(entries, startedAt, refreshedBefore);
     this.snapshot = { entries, updatedAt: Date.now(), scope: scopeSignature(scope) };
     writeJSON(keys.library, this.snapshot);
     writeJSON(keys.matches, this.matches);
+  }
+
+  /** The list's start_from isn't in put.io's API definition, so only a position it does give counts; a missing or 0
+   * value never removes one. Positions are never dropped by a refresh, except old ones of files that are gone. */
+  private notePositionsFromList(entries: LibraryEntry[], startedAt: number, refreshedBefore: boolean) {
+    const next: Record<number, Position> = { ...this.positions };
+    for (const e of entries) {
+      if (e.startFrom > 0) next[e.id] = mergePosition(next[e.id], putioRead(e.startFrom, startedAt, refreshedBefore ? startedAt : undefined));
+    }
+    const present = new Set(entries.map((e) => e.id));
+    const cutoff = Date.now() - KEEP_GONE_POSITIONS_MS;
+    this.positions = Object.fromEntries(Object.entries(next).filter(([id, p]) => present.has(Number(id)) || p.pending || p.at >= cutoff));
+    writeJSON(keys.positions, this.positions);
   }
 
   /** Breadth-first through what `scope` covers: the top of put.io (its loose videos and in-scope folders), everything

@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import type { PutioClient, PutioFile } from "../api/putio";
-import { describeVideo, LibraryIndex } from "./library";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { PutioError, type PutioClient, type PutioFile } from "../api/putio";
+import { describeVideo, LibraryIndex, type LibraryEntry } from "./library";
 import { includesTopLevelFolder, libraryScope, standardScope } from "./libraryScope";
+import { PositionSync } from "./positionSync";
 
 beforeEach(() => {
   const store = new Map<string, string>();
@@ -124,5 +125,189 @@ describe("library scope", () => {
     expect(index.entries.map((e) => e.id).sort((a, b) => a - b)).toEqual([1, 111, 221]);
     expect(index.needsRescan(standardScope)).toBe(false);
     expect(index.needsRescan(libraryScope({ moviesFolder: { id: 51, path: "Media/Films" }, tvFolder: null }))).toBe(true);
+  });
+});
+
+describe("watch positions across devices", () => {
+  const T = Date.parse("2026-10-19T12:00:00Z");
+  const at = (seconds: number) => vi.setSystemTime(T + seconds * 1000);
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); at(0); });
+  afterEach(() => vi.useRealTimers());
+
+  const heat: LibraryEntry = { id: 1, name: "Heat.1995.mkv", startFrom: 0, updatedAt: "2026-10-03", match: { tmdbID: 949, kind: "movie", title: "Heat" } };
+  const ep4: LibraryEntry = { id: 2, name: "Severance.S02E04.mkv", startFrom: 0, updatedAt: "2026-10-12", match: { tmdbID: 95396, kind: "tv", title: "Severance", season: 2, episode: 4 } };
+  const ep5: LibraryEntry = { id: 3, name: "Severance.S02E05.mkv", startFrom: 0, updatedAt: "2026-10-13", match: { tmdbID: 95396, kind: "tv", title: "Severance", season: 2, episode: 5 } };
+  /** What another device left in localStorage: the library read an hour ago. */
+  const cachedLibrary = (entries: LibraryEntry[] = [heat, ep4, ep5]) =>
+    localStorage.setItem("pc.library.v1", JSON.stringify({ entries, updatedAt: T - 3600_000, scope: "standard" }));
+
+  /** put.io's start-from, as the native apps and other browsers leave it; a full read of put.io fails the test. */
+  function fakePutio(positions: Record<number, number> = {}) {
+    const calls: string[] = [];
+    let failures = 0;
+    return {
+      calls,
+      positions,
+      failNextSaves: (n: number) => { failures = n; },
+      list: async () => { throw new Error("no full refresh expected"); },
+      getStartFrom: async (id: number) => {
+        calls.push(`get ${id}`);
+        if (!(id in positions)) throw new PutioError(404, "File not found");
+        return positions[id];
+      },
+      setStartFrom: async (id: number, seconds: number) => {
+        calls.push(`set ${id} ${seconds}`);
+        if (failures-- > 0) throw new Error("offline");
+        positions[id] = seconds;
+      },
+      resetStartFrom: async (id: number) => {
+        calls.push(`reset ${id}`);
+        if (failures-- > 0) throw new Error("offline");
+        positions[id] = 0;
+      },
+    };
+  }
+  const resume = (index: LibraryIndex, id: number) => index.resumeSeconds(index.entries.find((e) => e.id === id)!);
+
+  it("shows a position saved on another device after a foreground check, without reading all of put.io", async () => {
+    cachedLibrary();
+    const index = new LibraryIndex();
+    expect(index.continueWatching()).toEqual([]);
+    const putio = fakePutio({ 1: 0, 2: 1800, 3: 0 });
+    await new PositionSync(index, 0).check(putio);
+    expect(resume(index, 2)).toBe(1800);
+    expect(index.continueWatching().map((e) => e.id)).toEqual([2]);
+    expect(putio.calls.filter((c) => c.startsWith("get")).sort()).toEqual(["get 1", "get 2", "get 3"]);
+  });
+
+  it("skips a file put.io no longer has (404) and still merges the rest", async () => {
+    cachedLibrary();
+    const index = new LibraryIndex();
+    await new PositionSync(index, 0).check(fakePutio({ 1: 900 }));
+    expect(index.continueWatching().map((e) => e.id)).toEqual([1]);
+  });
+
+  it("keeps a position saved here when a refresh's list has no start_from, and after a reload", async () => {
+    const tree: Record<number, PutioFile[]> = { 0: [{ id: 1, name: "Heat.1995.1080p.mkv", file_type: "VIDEO", updated_at: "2026-10-03" }] };
+    const putio = { list: async (id: number) => ({ files: tree[id] ?? [] }) } as unknown as PutioClient;
+    const search = async () => [{ tmdbID: 949, title: "Heat", year: 1995 }];
+    const index = new LibraryIndex();
+    await index.refresh(putio, search);
+    const saved = index.noteProgress(1, 700, 6000);
+    index.markSent(1, saved.at); // put.io took it, but its list doesn't say so.
+    at(60);
+    await index.refresh(putio, search);
+    expect(resume(index, 1)).toBe(700);
+    expect(index.continueWatching().map((e) => e.id)).toEqual([1]);
+    expect(resume(new LibraryIndex(), 1)).toBe(700);
+  });
+
+  it("takes a list's position only when it's newer than what's known here", async () => {
+    let startFrom = 1000;
+    const putio = { list: async () => ({ files: [{ id: 1, name: "Heat.1995.mkv", file_type: "VIDEO", start_from: startFrom }] }) } as unknown as PutioClient;
+    const search = async () => [{ tmdbID: 949, title: "Heat", year: 1995 }];
+    const index = new LibraryIndex();
+    await index.refresh(putio, search);
+    expect(resume(index, 1)).toBe(1000);
+    expect(index.position(1)?.watchedAt).toBeUndefined(); // The first read can't tell when it was watched.
+    at(10);
+    index.noteProgress(1, 1500); // Not yet on put.io: the list's older value loses.
+    at(20);
+    await index.refresh(putio, search);
+    expect(resume(index, 1)).toBe(1500);
+    index.markSent(1, T + 10_000);
+    at(30);
+    startFrom = 2400; // Watched further on another device.
+    await index.refresh(putio, search);
+    expect(index.position(1)).toMatchObject({ seconds: 2400, source: "putio", watchedAt: T + 30_000 });
+  });
+
+  it("newest wins: a pending save here beats an older put.io read; a later read replaces a synced one", async () => {
+    cachedLibrary();
+    const index = new LibraryIndex();
+    const putio = fakePutio({ 2: 100 });
+    putio.failNextSaves(2);
+    const sync = new PositionSync(index, 0);
+    at(10);
+    await sync.save(putio, 2, 300, 3300);
+    expect(index.position(2)).toMatchObject({ seconds: 300, pending: true });
+    at(20);
+    await sync.fetch(putio, 2, 1000); // Still 100 on put.io: our save hasn't reached it.
+    expect(resume(index, 2)).toBe(300);
+    putio.positions[2] = 300;
+    at(30);
+    await sync.fetch(putio, 2, 1000); // put.io has it now.
+    expect(index.position(2)).toMatchObject({ seconds: 300, pending: false });
+    putio.positions[2] = 2000;
+    at(40);
+    await sync.fetch(putio, 2, 1000); // Watched on another device since.
+    expect(index.position(2)).toMatchObject({ seconds: 2000, source: "putio", watchedAt: T + 40_000 });
+  });
+
+  it("orders Continue Watching by when it was last watched anywhere, one card per show", async () => {
+    cachedLibrary();
+    const index = new LibraryIndex();
+    const sync = new PositionSync(index, 0);
+    const putio = fakePutio({ 1: 0, 2: 0, 3: 0 });
+    await sync.save(putio, 2, 1200, 3300);
+    at(10);
+    await sync.save(putio, 3, 400, 3300);
+    at(20);
+    await sync.save(putio, 1, 900, 6000);
+    expect(index.continueWatching().map((e) => e.id)).toEqual([1, 3]);
+    putio.positions[2] = 1500;
+    at(30);
+    await sync.check(putio);
+    expect(index.continueWatching().map((e) => e.id)).toEqual([2, 1]);
+  });
+
+  it("drops a video finished on another device from Continue Watching", async () => {
+    cachedLibrary([{ ...heat, startFrom: 900 }, ep4]);
+    const index = new LibraryIndex();
+    const sync = new PositionSync(index, 0);
+    const putio = fakePutio({ 1: 900, 2: 1250 });
+    await sync.check(putio);
+    expect(index.continueWatching().map((e) => e.id).sort()).toEqual([1, 2]);
+    putio.positions[2] = 0;
+    at(31);
+    await sync.check(putio);
+    expect(index.position(2)).toMatchObject({ seconds: 0 });
+    expect(index.continueWatching().map((e) => e.id)).toEqual([1]);
+  });
+
+  it("resets put.io's position when watched to the end", async () => {
+    cachedLibrary();
+    const index = new LibraryIndex();
+    const putio = fakePutio({ 2: 1250 });
+    await new PositionSync(index, 0).save(putio, 2, 3200, 3300);
+    expect(putio.calls).toEqual(["reset 2"]);
+    expect(index.position(2)).toMatchObject({ seconds: 0, pending: false });
+  });
+
+  it("keeps a save put.io didn't take (after one retry) and sends it at the next check", async () => {
+    cachedLibrary();
+    const index = new LibraryIndex();
+    const putio = fakePutio({ 2: 100 });
+    putio.failNextSaves(2);
+    await new PositionSync(index, 0).save(putio, 2, 700, 3300);
+    expect(putio.calls).toEqual(["set 2 700", "set 2 700"]);
+    // Still waiting after a reload.
+    const reloaded = new LibraryIndex();
+    expect(reloaded.position(2)).toMatchObject({ seconds: 700, pending: true });
+    at(5);
+    const sync = new PositionSync(reloaded, 0);
+    await sync.check(putio);
+    expect(putio.positions[2]).toBe(700);
+    expect(putio.calls.indexOf("set 2 700", 2)).toBeLessThan(putio.calls.indexOf("get 2"));
+    expect(reloaded.position(2)).toMatchObject({ seconds: 700, pending: false });
+    // Within 30 s a check only sends what's waiting.
+    putio.calls.length = 0;
+    await sync.check(putio);
+    expect(putio.calls).toEqual([]);
+  });
+
+  it("brings over positions an older build kept in the library cache", () => {
+    localStorage.setItem("pc.library.v1", JSON.stringify({ entries: [heat], updatedAt: T - 1000, progress: { 1: 640 } }));
+    expect(new LibraryIndex().position(1)).toEqual({ seconds: 640, at: T - 1000, source: "device", pending: false });
   });
 });

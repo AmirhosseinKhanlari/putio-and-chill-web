@@ -367,7 +367,9 @@ function Row({ file, selecting, selected, menuOpen, onToggle, onDownload, onMenu
 }
 
 function FileText({ file }: { file: PutioFile }) {
-  const watched = isVideo(file) && file.start_from && file.start_from >= 30 ? ` · ${clock(file.start_from)} watched` : "";
+  // The newest position known here wins over the list's (which put.io doesn't document).
+  const position = library.position(file.id)?.seconds ?? file.start_from ?? 0;
+  const watched = isVideo(file) && position >= 30 ? ` · ${clock(position)} watched` : "";
   return (
     <span className="file-text">
       <span className="file-name">{file.name}</span>

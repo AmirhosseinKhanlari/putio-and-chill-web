@@ -75,7 +75,7 @@ export const isFolder = (file: PutioFile) => file.file_type === "FOLDER";
 export class PutioClient {
   constructor(private readonly token: string) {}
 
-  private async request<T>(path: string, init?: { query?: Record<string, string>; form?: Record<string, string> }): Promise<T> {
+  private async request<T>(path: string, init?: { query?: Record<string, string>; form?: Record<string, string>; signal?: AbortSignal }): Promise<T> {
     const url = new URL(`${BASE}/${path}`);
     for (const [k, v] of Object.entries(init?.query ?? {})) url.searchParams.set(k, v);
     const response = await fetch(url, {
@@ -83,6 +83,7 @@ export class PutioClient {
       headers: { Authorization: `token ${this.token}`, ...(init?.form ? { "Content-Type": "application/x-www-form-urlencoded" } : {}) },
       body: init?.form ? new URLSearchParams(init.form) : undefined,
       cache: "no-store",
+      signal: init?.signal,
     });
     if (!response.ok) {
       let message = `put.io ${response.status}`;
@@ -166,8 +167,19 @@ export class PutioClient {
     await this.request("trash/empty", { form: {} });
   }
 
+  // Watch positions, through put.io's documented start-from endpoints (the native apps use the same ones).
+
+  async getStartFrom(fileID: number, signal?: AbortSignal): Promise<number> {
+    return (await this.request<{ start_from?: number }>(`files/${fileID}/start-from`, { signal })).start_from ?? 0;
+  }
+
   async setStartFrom(fileID: number, seconds: number): Promise<void> {
-    await this.request(`files/${fileID}/start-from/set`, { form: { time: String(Math.floor(seconds)) } });
+    await this.request(`files/${fileID}/start-from`, { form: { time: String(Math.floor(seconds)) } });
+  }
+
+  /** Watched to the end: put.io forgets the position. */
+  async resetStartFrom(fileID: number): Promise<void> {
+    await this.request(`files/${fileID}/start-from/delete`, { form: {} });
   }
 
   async subtitles(fileID: number): Promise<PutioSubtitle[]> {

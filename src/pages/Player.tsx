@@ -12,7 +12,8 @@ import { SubtitleOverlay, useVideoFrame } from "../components/player/SubtitleOve
 import { audioLabels, bestAudioIndex } from "../components/player/subtitles";
 import { useSubtitles } from "../components/player/useSubtitles";
 import { clock } from "../lib/format";
-import { library, type LibraryEntry } from "../lib/library";
+import type { LibraryEntry } from "../lib/library";
+import { PLAYER_TIMEOUT_MS, positionSync } from "../lib/positionSync";
 import { useSettings } from "../lib/settings";
 import { entryItem, useLibrary } from "../state/hooks";
 import { usePutio } from "../state/session";
@@ -84,9 +85,21 @@ function PlayerScreen({ id }: { id: number }) {
   const subtitle = entry?.match?.kind === "tv" ? defaultCaption(entry).replace(`${entry.match.title} · `, "") : entry?.match?.year ? String(entry.match.year) : "";
   const subs = useSubtitles({ fileID: id, fileName: entry?.name ?? file.data?.name, entry, putio, settings, searching: menu === "subtitles" });
 
-  // Start: put.io's stream from where you left off (or ?from=0 to start over).
-  const startAt = params.get("from") !== null ? Number(params.get("from")) : entry ? lib.resumeSeconds(entry) : file.data?.start_from ?? 0;
-  const ready = Boolean(entry || file.data);
+  // Start: put.io's stream from where you left off (or ?from=0 to start over). Where you left off is asked of put.io
+  // first (briefly), in case another device moved on; the newest position wins, else the one known here.
+  const from = params.get("from");
+  const [positionChecked, setPositionChecked] = useState(from !== null);
+  useEffect(() => {
+    if (from !== null) return;
+    let live = true;
+    void positionSync.fetch(putio, id, PLAYER_TIMEOUT_MS).catch(() => {}).finally(() => { if (live) setPositionChecked(true); });
+    return () => { live = false; };
+    // Once per file, as it opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+  const startAt = from !== null ? Number(from)
+    : entry ? lib.resumeSeconds(entry) : lib.position(id)?.seconds ?? file.data?.start_from ?? 0;
+  const ready = positionChecked && Boolean(entry || file.data);
   useEffect(() => {
     const el = video.current;
     if (!el || !ready) return;
@@ -157,10 +170,7 @@ function PlayerScreen({ id }: { id: number }) {
     const position = Math.floor(el.currentTime);
     if (!force && Math.abs(position - lastSaved.current) < SAVE_EVERY) return;
     lastSaved.current = position;
-    const finished = position >= el.duration * 0.95;
-    const value = finished ? 0 : position;
-    library.noteProgress(id, value, el.duration);
-    putio.setStartFrom(id, value).catch(() => {});
+    void positionSync.save(putio, id, position, el.duration);
   }, [id, putio]);
 
   useEffect(() => {

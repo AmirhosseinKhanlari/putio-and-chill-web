@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useState, useSyncExt
 import { tmdb, type CatalogItem } from "../api/tmdb";
 import { library, type LibraryEntry } from "../lib/library";
 import { libraryScope } from "../lib/libraryScope";
+import { positionSync } from "../lib/positionSync";
 import { loadSettings, useSettings } from "../lib/settings";
 import { keys, readJSON, writeJSON } from "../lib/storage";
 import { mergeOldFoldersOnce } from "./oldFolderMerge";
@@ -42,6 +43,24 @@ function everyMinute(check: () => void) {
 /** `afterChanges`: put.io just changed, so a refresh already running (which may have read the old state) doesn't count. */
 export function refreshLibrary(putio: NonNullable<ReturnType<typeof useSession>["putio"]>, afterChanges = false) {
   return library.refresh(putio, (kind, title, year) => tmdb.searchKind(kind, title, year), libraryScope(loadSettings()), { afterChanges });
+}
+
+/** Positions saved on other devices, read without reading all of put.io: when the app opens, when it comes back
+ * to the front (`onFocus`), and when Home opens. Saves that didn't reach put.io are sent first. At most every 30 s. */
+export function usePositionChecks({ onFocus = false } = {}) {
+  const { putio } = useSession();
+  useEffect(() => {
+    if (!putio) return;
+    const check = () => { if (document.visibilityState !== "hidden") void positionSync.check(putio); };
+    check();
+    if (!onFocus) return;
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      window.removeEventListener("focus", check);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, [putio, onFocus]);
 }
 
 /** The first time the app opens signed in: merges the old AMDB/Movies and AMDB/TV folders into Movies and TV Series

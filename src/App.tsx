@@ -14,7 +14,7 @@ import { Search } from "./pages/Search";
 import { Settings } from "./pages/Settings";
 import { SignIn } from "./pages/SignIn";
 import { Title } from "./pages/Title";
-import { MyListProvider, ToastProvider, useAccount, useOldFolderMerge } from "./state/hooks";
+import { MyListProvider, ToastProvider, useAccount, useOldFolderMerge, usePositionChecks } from "./state/hooks";
 import { SessionProvider, useSession } from "./state/session";
 
 // The player brings hls.js: loaded only when something plays.
@@ -26,6 +26,7 @@ function Routed() {
   const { putio, signOut } = useSession();
   const account = useAccount();
   useOldFolderMerge();
+  usePositionChecks({ onFocus: true });
   // put.io no longer accepts the sign-in (revoked or expired): back to signing in.
   useEffect(() => {
     if (account.error instanceof PutioError && account.error.status === 401) signOut();

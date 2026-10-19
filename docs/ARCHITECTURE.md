@@ -56,6 +56,7 @@ same-origin proxy for the few services that don't allow that.
 | `releaseName.ts` | Title, year, season/episode, resolution, codec and source from release and file names |
 | `matcher.ts` | Matches a parsed name to TMDB search results with a confidence score |
 | `library.ts`, `libraryScope.ts` | The library index: which put.io folders count, walking them, matching each video once, watch positions and durations, Continue Watching |
+| `positions.ts`, `positionSync.ts` | Watch positions: one record per file merged so the newest wins (the native apps' rules), saves that wait until put.io has them, and the check for other devices' positions when the app comes to the front |
 | `smartGet.ts` | The Get & Watch rule: which release to send |
 | `folders.ts` | put.io folder layout (`Movies`, `TV Series/<Show>/Season N`), finding or creating folders |
 | `folderMerge.ts`, `folderMergeRun.ts` | The one-time merge of the old `AMDB/…` folders: a pure planner and the runner that calls put.io |
@@ -115,7 +116,11 @@ name and base address to `proxyTargets` (and any headers it needs).
 
 **Playing**
 1. The player fetches put.io's HLS URL and plays it with hls.js (native HLS where the browser has it).
-2. Progress is saved to put.io (`start_from`) and locally, so resume works here and in the native app.
+2. Progress is saved locally at once and sent to put.io's start-from (pending, and sent again later, if put.io can't
+   be reached), so resume works here and in the native app. Before resuming, the player asks put.io for the file's
+   position (2 s at most) and the newest one wins. When the app opens or comes back to the front (at most every
+   30 s), positions of the started and latest changed videos are read from put.io, so another device's progress
+   shows without reading the whole library.
 3. `player/useSubtitles.ts` lists put.io's tracks and OpenSubtitles results, restores the file's choice and timing,
    and `SubtitleOverlay` draws the cues in the chosen style.
 
@@ -123,7 +128,7 @@ name and base address to `proxyTargets` (and any headers it needs).
 
 | Data | Stored | Refreshed |
 |---|---|---|
-| put.io library, matches, durations | localStorage (`pc.library.v1`, `pc.matches.v1`, `pc.durations.v1`) | At load if older than the Settings interval (default 1 h); Update Now; when a transfer finishes |
+| put.io library, matches, durations, watch positions | localStorage (`pc.library.v1`, `pc.matches.v1`, `pc.durations.v1`, `pc.positions.v1`) | At load if older than the Settings interval (default 1 h); Update Now; when a transfer finishes |
 | Settings, My List, recent searches, sign-ins | localStorage (`pc.settings.v1`, `pc.mylist.v1`, …) | On change |
 | TMDB rows, charts, Coming Up, Latest | TanStack Query (memory) | Per query `staleTime`: trending and lists a day, recommendations an hour, account 30 s |
 | Transfers | Query, polled | Every 5 seconds while Library is open |

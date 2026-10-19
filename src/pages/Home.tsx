@@ -10,7 +10,7 @@ import { Hero } from "../components/Hero";
 import { CheckIcon, DiceIcon } from "../components/Icons";
 import { Shelf } from "../components/Shelf";
 import { useSettings } from "../lib/settings";
-import { useLibrary, useMyList } from "../state/hooks";
+import { useLibrary, useMyList, usePositionChecks } from "../state/hooks";
 import { useSession } from "../state/session";
 import "../styles/lists.css";
 
@@ -122,6 +122,7 @@ export function Home() {
   const settings = useSettings();
   const navigate = useNavigate();
   const trending = useQuery({ queryKey: ["trending", "all"], queryFn: () => tmdb.trending("all"), staleTime: day });
+  usePositionChecks();
   const continueWatching = lib.continueWatching();
   const recent = lib.recentlyAdded();
   // The title last watched: its recommendations become "Because you watched …".
