@@ -1,75 +1,168 @@
-# Putio & Chill — web
+<div align="center">
 
-The web version of the Putio & Chill app: pick a movie or show, send it to put.io, and watch it in the browser.
+<img src="docs/images/home.jpg" alt="Putio & Chill on the web: Home" width="100%">
 
-## Run it
+<br>
+
+<img alt="React 18" src="https://img.shields.io/badge/React-18-20232A?logo=react&logoColor=61DAFB">
+<img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white">
+<img alt="Vite 6" src="https://img.shields.io/badge/Vite-6-646CFF?logo=vite&logoColor=white">
+<img alt="Cloudflare Pages" src="https://img.shields.io/badge/Cloudflare-Pages-F38020?logo=cloudflare&logoColor=white">
+<img alt="Tests" src="https://img.shields.io/badge/tests-150%2B%20passing-34C759">
+
+**The put.io client for the browser.**<br>
+Browse every movie and show, send the best release to put.io in one click,<br>
+and watch with your progress and subtitles on any computer.
+
+[Features](docs/FEATURES.md) · [Architecture](docs/ARCHITECTURE.md) · [Development](docs/DEVELOPMENT.md) ·
+[iPhone, iPad and Apple TV app](https://github.com/AmirhosseinKhanlari/putio-and-chill)
+
+</div>
+
+<br>
+
+## Why Putio & Chill
+
+put.io is a great place to keep movies and shows. Putio & Chill makes it feel like a streaming service: your library
+matched to rich artwork and ratings, smart discovery, one-click "Get & Watch" and a real player. This is the web
+version of the [native app](https://github.com/AmirhosseinKhanlari/putio-and-chill): the same library, the same
+Get & Watch rules and the same put.io folders, in any modern browser, with nothing to install.
+
+<table>
+  <tr>
+    <td width="50%" valign="top" align="center">
+      <img src="docs/images/movies.jpg" width="100%" alt="Movies">
+      <h3>Your library, front and center</h3>
+      Continue Watching, Recently Added and My List, from a put.io library matched to TMDB and kept in the browser so
+      the app opens instantly.
+    </td>
+    <td width="50%" valign="top" align="center">
+      <img src="docs/images/title.jpg" width="100%" alt="Title page">
+      <h3>Every title, in depth</h3>
+      Full-bleed art, year, runtime, genres, TMDB rating with an IMDb link, trailer, cast and crew, More Like This;
+      for shows, every season and episode with stills and the season's best marked.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top" align="center">
+      <img src="docs/images/coming-up.jpg" width="100%" alt="Coming Up">
+      <h3>Coming Up</h3>
+      This weekend's box office, what's in cinemas, what's coming soon, and the next episodes of your shows, day by day.
+    </td>
+    <td width="50%" valign="top" align="center">
+      <img src="docs/images/surprise.jpg" width="100%" alt="Surprise Me">
+      <h3>Surprise Me</h3>
+      Pick Movies or Series and a mood and get a well-rated pick, with alternatives and Shuffle.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>Endless discovery</h3>
+      <ul>
+        <li>Trending, Popular, Top Rated and genre rows</li>
+        <li>New on Netflix and Disney+, New Series, Returning This Week, Critically Acclaimed</li>
+        <li>IMDb Top 250 movies and shows, your IMDb watchlist</li>
+        <li>Latest Movies and Shows from MyMoviz and chill.institute</li>
+        <li>"Because you watched…" from the last thing you played</li>
+      </ul>
+      <h3>Get &amp; Watch</h3>
+      <ul>
+        <li>Best release by your rules: quality, size, seeders</li>
+        <li>Sent to put.io into Movies / TV Series / Season folders</li>
+        <li>Progress, speed and a Ready to watch toast; plays when ready</li>
+        <li>Or pick any version yourself, filtered by quality</li>
+      </ul>
+    </td>
+    <td width="50%" valign="top">
+      <h3>A real player</h3>
+      <ul>
+        <li>HLS streaming from put.io, resume synced with the native app</li>
+        <li>put.io subtitles + OpenSubtitles search, timing, styles</li>
+        <li>Audio tracks, speed, Picture in Picture, full screen</li>
+        <li>Keyboard shortcuts like YouTube's (space, ←/→, F, M, &lt; &gt;)</li>
+        <li>Next episode card with countdown and auto-play</li>
+      </ul>
+      <h3>Your put.io, in full</h3>
+      <ul>
+        <li>Library with filters and storage meter; Files with rename, move, copy, delete, new folder, search</li>
+        <li>Trash: restore, delete forever, empty</li>
+        <li>Settings shared in spirit with the iPhone app, saved in this browser</li>
+      </ul>
+    </td>
+  </tr>
+</table>
+
+## Get started
 
 ```bash
+git clone https://github.com/AmirhosseinKhanlari/putio-and-chill-web.git
+cd putio-and-chill-web
 npm install
-cp .env.example .env.local   # then fill in VITE_TMDB_TOKEN
-npm run dev                  # http://localhost:5173
+cp .env.example .env.local      # add your TMDB token (and optional keys)
+npm run dev                     # http://localhost:5173
 ```
 
-Sign in with put.io: the app shows a short code, you enter it at put.io/link. Get & Watch and Versions search the
-torrent sources turned on in Settings → Sources (YTS, EZTV, The Pirate Bay, Knaben, Torrents.csv, TorrentGalaxy);
-connecting chill.institute in Settings → Connected Services adds its indexers too, but nothing needs it.
+Sign in with put.io: the app shows a short code, you enter it at [put.io/link](https://put.io/link). Get & Watch and
+Versions search the torrent sources turned on in Settings → Sources (YTS, EZTV, The Pirate Bay, Knaben,
+Torrents.csv, TorrentGalaxy); connecting chill.institute in Settings → Connected Services adds its indexers too,
+but nothing needs it.
 
-## Check it
+| Key in `.env.local` | For | Get it from |
+|---|---|---|
+| `VITE_TMDB_TOKEN` | Required: catalog, artwork, matching | themoviedb.org → Settings → API (the *API Read Access Token*) |
+| `VITE_TRAKT_CLIENT_ID` | IMDb Top 250, box office | trakt.tv → Your API Apps |
+| `VITE_PUTIO_APP_ID` | The put.io app the sign-in code belongs to (a default is set) | put.io → Settings → OAuth apps |
 
-```bash
-npm test           # parser, matcher, library index, Smart Get, sources and proxy
-npm run typecheck
-npm run build      # static site in dist/
+`.env.local` is gitignored. Users sign in to put.io in the app; chill.institute and OpenSubtitles accounts are
+optional and live in Settings. Everything (sign-ins, settings, the library cache) stays in the browser's
+localStorage; nothing is sent anywhere but the services themselves.
+
+## Under the hood
+
+- **React 18 + TypeScript**, built with Vite, routed with React Router, with TanStack Query for every request and
+  hls.js for playback (loaded only when something plays).
+- **One shared logic layer**: `src/api/` (put.io, TMDB, Trakt, chill.institute, OpenSubtitles and the release
+  sources) and `src/lib/` (release-name parsing, title matching, the library index, Smart Get, folder layout),
+  ported from the native app's `AMDBCore` and covered by 150+ Vitest tests.
+- **A small same-origin proxy** for the services that don't allow browser requests: the Vite dev server in
+  development, a Cloudflare Pages Function in production, both from one allow-list.
+- **Static site**: `npm run build` makes `dist/`, deployed to Cloudflare Pages.
+
+<details>
+<summary><b>Project layout</b></summary>
+
 ```
+src/
+  api/               put.io, TMDB, chill.institute, OpenSubtitles, people clients
+    lists/           TMDB curated lists, Trakt charts, MyMoviz, chill catalog, IMDb watchlist
+    sources/         Release sources (YTS, EZTV, apibay, Knaben, Torrents.csv, TorrentGalaxy), aggregator, proxy allow-list
+  lib/               Release-name parser, matcher, library index, Smart Get, folders, settings, storage
+  pages/             Home, Movies, TV, Coming Up, Search, Library, Files, Trash, Title, Person, Surprise, Player, Settings, Sign in
+  components/        Hero, shelves, cards, Get & Watch / Versions, player, file manager and settings parts
+  state/             Session (sign-ins), shared hooks (account, library, transfers, My List, toasts)
+  styles/            CSS, one file per area
+functions/proxy/     Cloudflare Pages Function: the production proxy
+public/              Icons and the _redirects file
+docs/                Documentation and images
+vite.config.ts       Dev server, with the development proxy
+```
+</details>
 
-## What's where
+## Documentation
 
-- `src/api/` — put.io, TMDB and chill.institute clients (all allow browser requests).
-- `src/api/sources/` — the torrent sources, one module each (ports of the iPhone app's providers), and `index.ts`, the
-  aggregator: every source that's on is asked in parallel (12 s each), magnet links are built from info-hashes, the
-  same torrent from several sources becomes one row (most seeders wins), and results are filtered to the episode,
-  season pack or movie asked for. TorrentGalaxy is read from its HTML pages: its search list has no info-hashes, so
-  the detail pages of the best 8 matches are read for theirs (4 at a time); pages it redirects away are skipped.
-- `src/lib/library.ts` — reads what `src/lib/libraryScope.ts` covers (Movies and TV Series at the top of put.io, any
-  folders picked in Settings, and videos loose at the top; other folders show only in Files), matches each video to
-  TMDB (once per name), and keeps watch positions and video lengths for the watched bars. Ported from the iPhone
-  app's LibraryIndex.
-- `src/lib/releaseName.ts`, `src/lib/matcher.ts`, `src/lib/smartGet.ts` — release-name parsing, title matching and
-  Get & Watch's choice of release, as in the iPhone app. Files go to the same put.io folders (`Movies`,
-  `TV Series/<Show>/Season N`; `src/lib/folders.ts`), found ignoring case and created when missing.
-- `src/lib/folderMerge.ts`, `src/lib/folderMergeRun.ts`, `src/state/oldFolderMerge.ts` — the one-time merge of the
-  folders older builds used (AMDB/Movies, AMDB/TV) into Movies and TV Series, once per put.io account in a browser:
-  a pure planner (same-named folders merge, a taken file name moves as "Name (from AMDB).ext", emptied folders go
-  to put.io's Trash; nothing else in AMDB is touched) and the runner that calls put.io and stops at the first
-  failed move, to continue next time.
-- `src/pages/` — Home, Movies, TV, Coming Up, Search, Library, Files, title page, player, Settings, sign-in.
-- `src/pages/Settings.tsx`, `src/components/settings/` — Settings as a hub of pages, like the iPhone app (the open page is
-  `?page=…`): Playback (auto-play, audio language), Subtitles (language, style with a preview, OpenSubtitles API key),
-  Smart Get (one-tap Get, quality, size limit, Versions' default quality), Sources, Library (automatic updates and
-  interval, Update Now), put.io Folders (Movies and TV folders picked by browsing put.io, season folders), Connected
-  Services (chill.institute, IMDb watchlist link), About. Everything is in `src/lib/settings.ts`, saved in this browser.
+| | |
+|---|---|
+| [**Features**](docs/FEATURES.md) | The complete tour, and what differs from the native app |
+| [**Architecture**](docs/ARCHITECTURE.md) | Modules, data flow, the proxy, caching |
+| [**Development**](docs/DEVELOPMENT.md) | Setup, testing, deploying, troubleshooting |
 
-## The proxy
+## Disclaimer
 
-Some services don't allow browser requests (apibay.org, api.knaben.org, OpenSubtitles, IMDb's GraphQL API, mymoviz.co,
-torrentgalaxy.info), so the site has a small same-origin proxy: `/proxy/<name>/<path>` goes to that name's address in
-`src/api/sources/proxyTargets.ts`, and nowhere else. Only GET/HEAD/POST (GET/HEAD for mymoviz and torrentgalaxy)
-and a few headers (Accept, Accept-Language, Content-Type, Authorization, plus each target's own) are passed on;
-cookies, origin and referrer are not, and only the body, status and content type come back. torrentgalaxy is a browser
-site, so the proxy sends it a browser User-Agent and Accept. `/proxy/opensubtitles/file?url=…` fetches one subtitle
-file, only from https links on opensubtitles.com / opensubtitles.org (400 otherwise).
+Putio & Chill is a personal project, not affiliated with put.io, chill.institute, TMDB, IMDb, Trakt, OpenSubtitles or
+any release source. You are responsible for what you download; follow the laws where you live and the terms of the
+services you connect.
 
-- In development, `vite.config.ts` sets this up on the dev server (restart it after changing the list).
-- In production, `functions/proxy/[[path]].ts` is a Cloudflare Pages Function doing the same.
-
-To add a service, add a name and base address to `proxyTargets` (and any headers it needs); both use the same list.
-
-## Deploying
-
-`npm run build` makes a static site in `dist/`; `public/_redirects` sends every path to the app. Deploy to Cloudflare
-Pages so `functions/` runs too (without it, The Pirate Bay, Knaben, TorrentGalaxy, OpenSubtitles search and the IMDb
-lists fail and the other sources still work). Set `VITE_TMDB_TOKEN` in the host's build settings.
-
-Note: `VITE_` values are built into the page, so anyone can read the TMDB token from a deployed site. TMDB read tokens
-are meant for apps like this, but use a token made for the web app (not the iPhone app's) so it can be replaced on its
-own. put.io and chill.institute sign-ins stay in each visitor's browser (localStorage) and are never in the build.
+<sub>
+<img src="https://www.themoviedb.org/assets/2/v4/logos/v2/blue_short-8e7b30f73a4020692ccca9c88bafe5dcb6f8a62a4c6bc55cd9ba82bb2cd95f6c.svg" height="12" alt="TMDB">
+&nbsp;This product uses the TMDB API but is not endorsed or certified by TMDB. Artwork in the screenshots comes from TMDB.
+</sub>
