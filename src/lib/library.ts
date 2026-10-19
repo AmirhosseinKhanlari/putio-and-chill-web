@@ -159,10 +159,12 @@ export class LibraryIndex {
   }
 
   /** Whose positions to read from put.io when the app comes to the front: the started ones (last watched first),
-   * then the latest changed videos, where another device may have started something new. */
+   * then the latest changed videos, where another device may have started something new. Started ones leave room
+   * for at least 10 of those, as in the native apps. */
   positionCandidates(limit = 30): number[] {
+    const started = this.started().slice(0, Math.max(0, limit - 10));
     const changed = [...this.entries].sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
-    return [...new Set([...this.started(), ...changed].map((e) => e.id))].slice(0, limit);
+    return [...new Set([...started, ...changed].map((e) => e.id))].slice(0, limit);
   }
 
   /** Files saved here that put.io doesn't have yet. */

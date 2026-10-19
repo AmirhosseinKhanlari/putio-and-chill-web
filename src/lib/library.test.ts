@@ -180,6 +180,20 @@ describe("watch positions across devices", () => {
     expect(putio.calls.filter((c) => c.startsWith("get")).sort()).toEqual(["get 1", "get 2", "get 3"]);
   });
 
+  it("checks at most 20 started videos, leaving room for the 10 latest changed ones", () => {
+    const day = (n: number) => `2026-10-${String(n).padStart(2, "0")}`;
+    const started = Array.from({ length: 25 }, (_, i): LibraryEntry => ({ id: 100 + i, name: `s${i}.mkv`, startFrom: 600, updatedAt: day(1) }));
+    const fresh = Array.from({ length: 12 }, (_, i): LibraryEntry => ({ id: 200 + i, name: `f${i}.mkv`, startFrom: 0, updatedAt: day(10 + i) }));
+    cachedLibrary([...started, ...fresh]);
+    const index = new LibraryIndex();
+    started.forEach((e, i) => index.notePutioPosition(e.id, 600, T + i * 1000)); // Later ids watched later.
+    const ids = index.positionCandidates();
+    expect(ids).toHaveLength(30);
+    expect(ids.slice(0, 20)).toEqual(started.slice(5).reverse().map((e) => e.id));
+    expect(ids.slice(20)).toEqual(fresh.slice(2).reverse().map((e) => e.id));
+    expect(index.positionCandidates(12)).toEqual([124, 123, ...fresh.slice(2).reverse().map((e) => e.id)]);
+  });
+
   it("skips a file put.io no longer has (404) and still merges the rest", async () => {
     cachedLibrary();
     const index = new LibraryIndex();
