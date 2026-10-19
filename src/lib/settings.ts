@@ -2,6 +2,7 @@
  * Read them with useSettings(); outside React, loadSettings(). */
 import { useSyncExternalStore, type CSSProperties } from "react";
 import type { SourceID } from "../api/sources/types";
+import { isOldFolder } from "./folders";
 import { keys, readJSON, writeJSON } from "./storage";
 
 export interface SourceConfig {
@@ -48,7 +49,7 @@ export interface AppSettings {
   openSubtitlesKey: string | null;
   libraryAutoUpdate: boolean;
   libraryUpdateMinutes: number;
-  /** Where Get & Watch saves in put.io; null = AMDB/Movies and AMDB/TV. */
+  /** Where Get & Watch saves in put.io; null = Movies and TV Series at the top of put.io. */
   moviesFolder: PutioFolderRef | null;
   tvFolder: PutioFolderRef | null;
   /** Episodes go into "Season N" folders inside the show's folder. */
@@ -98,7 +99,18 @@ function load(): AppSettings {
   merged.sources = defaultSources.map((d) => ({ ...d, enabled: saved.sources?.find((s) => s.id === d.id)?.enabled ?? d.enabled }));
   // As in the iPhone app: never more often than every 5 minutes.
   merged.libraryUpdateMinutes = Math.max(5, Number(merged.libraryUpdateMinutes) || defaultSettings.libraryUpdateMinutes);
-  return merged;
+  const cleaned = withoutOldFolderPicks(merged);
+  if (cleaned !== merged) writeJSON(keys.settings, cleaned);
+  return cleaned;
+}
+
+/** The same settings with a folder pick that is the old AMDB/Movies or AMDB/TV set back to the default (those are
+ * merged into Movies and TV Series, then removed). Returns `settings` itself when nothing changes. */
+export function withoutOldFolderPicks(settings: AppSettings, oldIDs: ReadonlySet<number> = new Set()): AppSettings {
+  const movies = settings.moviesFolder && isOldFolder(settings.moviesFolder, oldIDs);
+  const tv = settings.tvFolder && isOldFolder(settings.tvFolder, oldIDs);
+  if (!movies && !tv) return settings;
+  return { ...settings, moviesFolder: movies ? null : settings.moviesFolder, tvFolder: tv ? null : settings.tvFolder };
 }
 
 let current = load();

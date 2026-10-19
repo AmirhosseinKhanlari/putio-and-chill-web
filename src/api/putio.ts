@@ -19,6 +19,7 @@ export interface PutioFile {
 
 export interface PutioAccount {
   username: string;
+  user_id?: number;
   mail?: string;
   disk?: { avail: number; size: number; used: number };
   trash_size?: number;

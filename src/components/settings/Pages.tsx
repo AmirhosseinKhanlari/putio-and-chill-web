@@ -132,7 +132,7 @@ export function LibraryPage() {
       <Group>
         <Row label="Videos" description={lib.isRefreshing ? lib.progressText : undefined}><span className="muted">{lib.entries.length}</span></Row>
         <Row label="Last updated"><span className="muted" aria-live="polite">{lib.isRefreshing ? "Updating…" : status ?? ago(lib.updatedAt)}</span></Row>
-        <Row label="Update now" description="Reads every folder in put.io again.">
+        <Row label="Update now" description="Reads Movies, TV Series, your picked folders and the videos at the top of put.io again.">
           <button type="button" className="pill pill-small" disabled={lib.isRefreshing || !putio} onClick={() => void updateNow()}>{lib.isRefreshing ? "Updating…" : "Update Now"}</button>
         </Row>
       </Group>
@@ -152,7 +152,7 @@ export function FoldersPage() {
   const custom = s.moviesFolder !== null || s.tvFolder !== null;
   return (
     <>
-      <Group footer={`New downloads go to ${displayPath(s, "movie", "")} and ${displayPath(s, "tv", "Show", 1)}.`}>
+      <Group footer={`New downloads go to ${displayPath(s, "movie", "")} and ${displayPath(s, "tv", "Show", 1)}. Your library shows Movies, TV Series and the folders picked here, plus videos at the top of your put.io; Files shows everything.`}>
         <Row label="Movies" description={s.moviesFolder?.path ?? defaultMoviesPath.join("/")}>
           <button type="button" className="pill pill-small" aria-label="Change the movies folder" onClick={() => setPicking("movies")}>Change</button>
         </Row>
@@ -163,7 +163,7 @@ export function FoldersPage() {
       </Group>
       {custom && (
         <Group footer="Files already in put.io stay where they are.">
-          <Row label="Use the default folders" description="AMDB/Movies and AMDB/TV, as in the iPhone app.">
+          <Row label="Use the default folders" description="Movies and TV Series at the top of your put.io, as in the iPhone app.">
             <button type="button" className="pill pill-small" onClick={() => updateSettings({ moviesFolder: null, tvFolder: null })}>Reset</button>
           </Row>
         </Group>

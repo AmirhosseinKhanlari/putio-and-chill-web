@@ -1,7 +1,9 @@
 /** Get & Watch: picks the release Smart Get sends (the iPhone app's SmartPicker) and sends it to put.io, into the
- * folders picked in Settings (default AMDB/Movies and AMDB/TV/<Show>/Season N, as in the iPhone app). */
+ * folders picked in Settings (default Movies and TV Series/<Show>/Season N at the top of put.io, as in the iPhone
+ * app). */
 import type { Release } from "../api/sources/types";
-import { isFolder, type PutioClient, type PutioTransfer } from "../api/putio";
+import type { PutioClient, PutioTransfer } from "../api/putio";
+import { defaultFolders, findFolder } from "./folders";
 import type { MediaKind } from "../api/tmdb";
 import { loadSettings, type AppSettings, type SmartGetRule } from "./settings";
 import { readJSON, writeJSON } from "./storage";
@@ -26,8 +28,8 @@ export function pickRelease(releases: Release[], rule: SmartGetRule): Release | 
 
 type FolderSettings = Pick<AppSettings, "moviesFolder" | "tvFolder" | "seasonFolders">;
 
-export const defaultMoviesPath = ["AMDB", "Movies"];
-export const defaultTVPath = ["AMDB", "TV"];
+export const defaultMoviesPath: string[] = [defaultFolders.movies];
+export const defaultTVPath: string[] = [defaultFolders.tv];
 
 /** put.io folder names can't contain "/" (the iPhone app's rule, so both apps find the same show folder). */
 export function folderName(title: string): string {
@@ -44,11 +46,12 @@ export function destination(folders: FolderSettings, kind: MediaKind, title: str
   return { rootID: 0, path: [...(kind === "tv" ? defaultTVPath : defaultMoviesPath), ...below] };
 }
 
-/** "AMDB/TV/Severance/Season 2", for Settings and messages. */
+/** "TV Series/Severance/Season 2", for Settings and messages. */
 export function displayPath(folders: FolderSettings, kind: MediaKind, title: string, season?: number): string {
   const picked = kind === "tv" ? folders.tvFolder : folders.moviesFolder;
-  const base = picked?.path ?? (kind === "tv" ? defaultTVPath : defaultMoviesPath).join("/");
-  return [base, ...destination(folders, kind, title, season).path.slice(picked ? 0 : 2)].join("/");
+  const defaultPath = kind === "tv" ? defaultTVPath : defaultMoviesPath;
+  const base = picked?.path ?? defaultPath.join("/");
+  return [base, ...destination(folders, kind, title, season).path.slice(picked ? 0 : defaultPath.length)].join("/");
 }
 
 /** The default folders, for code that only knows a kind and title. */
@@ -56,12 +59,13 @@ export function folderPath(kind: MediaKind, title: string, season?: number): str
   return destination({ moviesFolder: null, tvFolder: null, seasonFolders: true }, kind, title, season).path;
 }
 
-/** Finds or creates `path` inside folder `rootID` and returns the last folder's id. */
-async function ensureFolder(putio: PutioClient, rootID: number, path: string[]): Promise<number> {
+/** Finds or creates `path` inside folder `rootID` and returns the last folder's id. Existing folders are found
+ * ignoring case ("tv series" counts as "TV Series"). */
+export async function ensureFolder(putio: Pick<PutioClient, "list" | "createFolder">, rootID: number, path: string[]): Promise<number> {
   let parent = rootID;
   for (const name of path) {
     const { files } = await putio.list(parent);
-    const existing = files.find((f) => isFolder(f) && f.name === name);
+    const existing = findFolder(files, name);
     parent = existing ? existing.id : (await putio.createFolder(name, parent)).id;
   }
   return parent;

@@ -50,7 +50,7 @@ export function FolderPicker({ title, defaultPath, selection, onPick, onDone }: 
         <h2 className="settings-picker-title">{title}</h2>
       </div>
 
-      <Group footer="Putio & Chill creates and uses this folder. Or pick any folder in your put.io below.">
+      <Group footer="At the top of your put.io; Putio & Chill creates it if it isn't there. Or pick any folder below.">
         <button type="button" className="settings-item settings-choice" aria-pressed={selection === null} onClick={() => pick(null)}>
           <span className="settings-text"><span className="strong">Default</span><span className="muted small">{defaultPath}</span></span>
           {selection === null && <span className="settings-check" aria-hidden="true">✓</span>}

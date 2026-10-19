@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import type { PutioFile } from "../api/putio";
 import type { Release } from "../api/sources/types";
 import { parseReleaseName } from "./releaseName";
-import { destination, displayPath, folderName, folderPath, pickRelease } from "./smartGet";
+import { defaultSettings, withoutOldFolderPicks } from "./settings";
+import { destination, displayPath, ensureFolder, folderName, folderPath, pickRelease } from "./smartGet";
 
 const GB = 1_000_000_000;
 const release = (name: string, seeders: number | undefined, sizeBytes?: number): Release => ({ name, link: name, seeders, sizeBytes, sources: ["test"], parsed: parseReleaseName(name) });
@@ -45,9 +47,9 @@ describe("pickRelease", () => {
 describe("folders", () => {
   const defaults = { moviesFolder: null, tvFolder: null, seasonFolders: true };
 
-  it("matches the iPhone app's default folders", () => {
-    expect(folderPath("movie", "Dune: Part Two")).toEqual(["AMDB", "Movies"]);
-    expect(folderPath("tv", "Severance", 2)).toEqual(["AMDB", "TV", "Severance", "Season 2"]);
+  it("matches the iPhone app's default folders: Movies and TV Series at the top of put.io", () => {
+    expect(folderPath("movie", "Dune: Part Two")).toEqual(["Movies"]);
+    expect(folderPath("tv", "Severance", 2)).toEqual(["TV Series", "Severance", "Season 2"]);
     expect(folderName(" AC/DC ")).toBe("AC-DC");
   });
 
@@ -55,9 +57,41 @@ describe("folders", () => {
     const picked = { moviesFolder: { id: 11, path: "Media/Films" }, tvFolder: { id: 22, path: "Media/Shows" }, seasonFolders: false };
     expect(destination(picked, "movie", "Dune")).toEqual({ rootID: 11, path: [] });
     expect(destination(picked, "tv", "Severance", 2)).toEqual({ rootID: 22, path: ["Severance"] });
-    expect(destination(defaults, "tv", "Severance", 2)).toEqual({ rootID: 0, path: ["AMDB", "TV", "Severance", "Season 2"] });
+    expect(destination(defaults, "tv", "Severance", 2)).toEqual({ rootID: 0, path: ["TV Series", "Severance", "Season 2"] });
     expect(displayPath(picked, "tv", "Severance", 2)).toBe("Media/Shows/Severance");
-    expect(displayPath(defaults, "tv", "Severance", 2)).toBe("AMDB/TV/Severance/Season 2");
-    expect(displayPath(defaults, "movie", "Dune")).toBe("AMDB/Movies");
+    expect(displayPath(defaults, "tv", "Severance", 2)).toBe("TV Series/Severance/Season 2");
+    expect(displayPath({ ...defaults, seasonFolders: false }, "tv", "Severance", 2)).toBe("TV Series/Severance");
+    expect(displayPath(defaults, "movie", "Dune")).toBe("Movies");
+  });
+
+  it("finds the user's own folders ignoring case instead of making new ones", async () => {
+    const tree: Record<number, PutioFile[]> = { 0: [{ id: 5, name: "tv series ", file_type: "FOLDER" }, { id: 6, name: "Movies 4K", file_type: "FOLDER" }] };
+    const created: string[] = [];
+    let next = 100;
+    const putio = {
+      list: async (id: number) => ({ files: tree[id] ?? [] }),
+      createFolder: async (name: string, parent: number) => {
+        created.push(name);
+        const folder = { id: next++, name, file_type: "FOLDER" };
+        (tree[parent] ??= []).push(folder);
+        return folder;
+      },
+    };
+    const { rootID, path } = destination(defaults, "tv", "Severance", 2);
+    const season = await ensureFolder(putio, rootID, path);
+    expect(created).toEqual(["Severance", "Season 2"]);
+    expect(tree[5].map((f) => f.name)).toEqual(["Severance"]);
+    expect(season).toBe(101);
+    await ensureFolder(putio, 0, ["Movies"]);
+    expect(created.at(-1)).toBe("Movies"); // "Movies 4K" isn't "Movies"
+  });
+
+  it("sends a Settings pick of the old AMDB/Movies or AMDB/TV back to the default", () => {
+    const old = { ...defaultSettings, moviesFolder: { id: 5, path: "AMDB/Movies" }, tvFolder: { id: 6, path: "amdb/TV" } };
+    expect(withoutOldFolderPicks(old)).toMatchObject({ moviesFolder: null, tvFolder: null });
+    const byID = { ...defaultSettings, moviesFolder: { id: 5, path: "Renamed" }, tvFolder: { id: 22, path: "Media/Shows" } };
+    expect(withoutOldFolderPicks(byID, new Set([5]))).toMatchObject({ moviesFolder: null, tvFolder: { id: 22, path: "Media/Shows" } });
+    const inside = { ...defaultSettings, moviesFolder: { id: 7, path: "AMDB/Movies/4K" } };
+    expect(withoutOldFolderPicks(inside)).toBe(inside);
   });
 });

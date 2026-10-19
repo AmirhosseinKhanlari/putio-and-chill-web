@@ -1,7 +1,9 @@
-/** Every video in put.io, matched to its movie or show (port of the iPhone app's LibraryIndex): shown at once from
- * the last load, then refreshed. Each name is looked up on TMDB once. */
+/** The videos in put.io that the library covers (libraryScope.ts: Movies, TV Series, picked folders, loose videos
+ * at the top), matched to their movie or show (port of the iPhone app's LibraryIndex): shown at once from the last
+ * load, then refreshed. Each name is looked up on TMDB once. */
 import { isFolder, isVideo, type PutioClient, type PutioFile } from "../api/putio";
 import type { MediaKind } from "../api/tmdb";
+import { includesTopLevelFolder, scopeSignature, standardScope, type LibraryScope } from "./libraryScope";
 import { normalizeTitle, pickMatch } from "./matcher";
 import { parseReleaseName } from "./releaseName";
 import { keys, readJSON, writeJSON } from "./storage";
@@ -32,6 +34,8 @@ export interface LibraryEntry {
 interface Snapshot {
   entries: LibraryEntry[];
   updatedAt: number;
+  /** scopeSignature of the walk that found these (absent in older caches, which read all of put.io). */
+  scope?: string;
 }
 
 type CachedMatch = Omit<LibraryMatch, "season" | "episode"> | null;
@@ -88,6 +92,8 @@ export class LibraryIndex {
   get entries(): LibraryEntry[] { return this.snapshot.entries; }
   get updatedAt(): number { return this.snapshot.updatedAt; }
   isStale(maxAgeMs = 15 * 60_000) { return Date.now() - this.snapshot.updatedAt > maxAgeMs; }
+  /** The entries were read with a different scope (an older build, or a folder picked since): read put.io again. */
+  needsRescan(scope: LibraryScope) { return this.snapshot.updatedAt > 0 && this.snapshot.scope !== scopeSignature(scope); }
 
   // MARK: Reading
 
@@ -169,8 +175,10 @@ export class LibraryIndex {
 
   // MARK: Refreshing
 
-  refresh(putio: PutioClient, search: Searcher): Promise<void> {
-    this.refreshing ??= this.run(putio, search).finally(() => {
+  /** `afterChanges`: put.io just changed (the folder merge), so an update already running doesn't count. */
+  refresh(putio: PutioClient, search: Searcher, scope: LibraryScope = standardScope, options: { afterChanges?: boolean } = {}): Promise<void> {
+    if (options.afterChanges && this.refreshing) return this.refreshing.then(() => this.refresh(putio, search, scope));
+    this.refreshing ??= this.run(putio, search, scope).finally(() => {
       this.refreshing = undefined;
       this.isRefreshing = false;
       this.progressText = "";
@@ -179,14 +187,14 @@ export class LibraryIndex {
     return this.refreshing;
   }
 
-  private async run(putio: PutioClient, search: Searcher) {
+  private async run(putio: PutioClient, search: Searcher, scope: LibraryScope) {
     this.isRefreshing = true;
     this.lookups.clear();
     this.progressText = "Reading your put.io…";
     this.emit();
     let videos: Awaited<ReturnType<LibraryIndex["walk"]>>;
     try {
-      videos = await this.walk(putio);
+      videos = await this.walk(putio, scope);
     } catch {
       return; // put.io couldn't be read: keep the library from last time.
     }
@@ -208,25 +216,39 @@ export class LibraryIndex {
     await Promise.all(Array.from({ length: 4 }, worker));
     // Positions saved in this session stay until put.io has them too.
     for (const e of entries) if (this.progress[e.id] !== undefined && e.startFrom === this.progress[e.id]) delete this.progress[e.id];
-    this.snapshot = { entries, updatedAt: Date.now() };
+    this.snapshot = { entries, updatedAt: Date.now(), scope: scopeSignature(scope) };
     writeJSON(keys.library, this.snapshot);
     writeJSON(keys.matches, this.matches);
   }
 
-  private async walk(putio: PutioClient) {
+  /** Breadth-first through what `scope` covers: the top of put.io (its loose videos and in-scope folders), everything
+   * below those, and the folders picked in Settings. */
+  async walk(putio: Pick<PutioClient, "list">, scope: LibraryScope = standardScope) {
     const found: { file: PutioFile; folder?: string; grandparent?: string }[] = [];
-    let queue: { id: number; name?: string; parentName?: string }[] = [{ id: 0 }];
+    let queue: { id: number; name?: string; parentName?: string }[] = [
+      { id: 0 },
+      ...scope.pickedFolders.map((f) => ({ id: f.id, name: f.path.split("/").at(-1) ?? f.path, parentName: f.path.split("/").at(-2) })),
+    ];
+    const queued = new Set(queue.map((f) => f.id));
+    const seen = new Set<number>();
     let read = 0;
     while (queue.length && read < MAX_FOLDERS) {
       const batch = queue.splice(0, 6);
       read += batch.length;
-      // The top folder must be readable (else the sign-in is bad); a folder deeper down may fail alone.
+      // The top folder must be readable (else the sign-in is bad); a folder deeper down (or a picked one that's gone)
+      // may fail alone.
       const lists = await Promise.all(batch.map((f) => (f.id === 0 ? putio.list(0) : putio.list(f.id).catch(() => ({ files: [] as PutioFile[] })))));
       lists.forEach((list, i) => {
+        const atTop = batch[i].id === 0;
         for (const file of list.files) {
           if (isFolder(file)) {
-            if (!SKIPPED_FOLDERS.has(file.name.trim().toLowerCase())) queue.push({ id: file.id, name: file.name, parentName: batch[i].name });
-          } else if (isVideo(file) && !/\bsample\b/i.test(file.name)) {
+            const reads = atTop ? includesTopLevelFolder(scope, file) : !SKIPPED_FOLDERS.has(file.name.trim().toLowerCase());
+            if (reads && !queued.has(file.id)) {
+              queued.add(file.id);
+              queue.push({ id: file.id, name: file.name, parentName: batch[i].name });
+            }
+          } else if (isVideo(file) && !/\bsample\b/i.test(file.name) && !seen.has(file.id)) {
+            seen.add(file.id);
             found.push({ file, folder: batch[i].name, grandparent: batch[i].parentName });
           }
         }

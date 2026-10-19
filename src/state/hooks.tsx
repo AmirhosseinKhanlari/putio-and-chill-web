@@ -2,26 +2,28 @@ import { useQuery } from "@tanstack/react-query";
 import { createContext, useCallback, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { tmdb, type CatalogItem } from "../api/tmdb";
 import { library, type LibraryEntry } from "../lib/library";
-import { useSettings } from "../lib/settings";
+import { libraryScope } from "../lib/libraryScope";
+import { loadSettings, useSettings } from "../lib/settings";
 import { keys, readJSON, writeJSON } from "../lib/storage";
+import { mergeOldFoldersOnce } from "./oldFolderMerge";
 import { useSession } from "./session";
 
 /** The library, re-rendering when it changes. With automatic updates on (Settings → Library), it's read again from
  * put.io when older than the chosen interval, checked once a minute while the app is open; with them off, only
- * when it has never been read or on Update Now. */
+ * when it has never been read, when what it reads changed (libraryScope.ts), or on Update Now. */
 export function useLibrary() {
   useSyncExternalStore(library.subscribe, library.getVersion);
   const { putio } = useSession();
-  const { libraryAutoUpdate, libraryUpdateMinutes } = useSettings();
+  const { libraryAutoUpdate, libraryUpdateMinutes, moviesFolder, tvFolder } = useSettings();
   useEffect(() => {
     if (!putio) return;
     const check = () => {
       const due = libraryAutoUpdate && library.isStale(libraryUpdateMinutes * 60_000);
-      if (due || library.updatedAt === 0) void refreshLibrary(putio);
+      if (due || library.updatedAt === 0 || library.needsRescan(libraryScope(loadSettings()))) void refreshLibrary(putio);
     };
     check();
     return everyMinute(check);
-  }, [putio, libraryAutoUpdate, libraryUpdateMinutes]);
+  }, [putio, libraryAutoUpdate, libraryUpdateMinutes, moviesFolder, tvFolder]);
   return library;
 }
 
@@ -37,8 +39,22 @@ function everyMinute(check: () => void) {
   };
 }
 
-export function refreshLibrary(putio: NonNullable<ReturnType<typeof useSession>["putio"]>) {
-  return library.refresh(putio, (kind, title, year) => tmdb.searchKind(kind, title, year));
+/** `afterChanges`: put.io just changed, so a refresh already running (which may have read the old state) doesn't count. */
+export function refreshLibrary(putio: NonNullable<ReturnType<typeof useSession>["putio"]>, afterChanges = false) {
+  return library.refresh(putio, (kind, title, year) => tmdb.searchKind(kind, title, year), libraryScope(loadSettings()), { afterChanges });
+}
+
+/** The first time the app opens signed in: merges the old AMDB/Movies and AMDB/TV folders into Movies and TV Series
+ * (once per account), reads the library again and says what moved. */
+export function useOldFolderMerge() {
+  const { putio } = useSession();
+  const toast = useToast();
+  useEffect(() => {
+    if (!putio) return;
+    void mergeOldFoldersOnce(putio, () => refreshLibrary(putio, true)).then((result) => {
+      if (result?.message) toast(result.message);
+    });
+  }, [putio, toast]);
 }
 
 export function useAccount() {
@@ -89,7 +105,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [message, setMessage] = useState<string | null>(null);
   useEffect(() => {
     if (!message) return;
-    const timer = setTimeout(() => setMessage(null), 4000);
+    // Longer messages (the folder merge) stay up long enough to read.
+    const timer = setTimeout(() => setMessage(null), Math.max(4000, message.length * 55));
     return () => clearTimeout(timer);
   }, [message]);
   return (

@@ -30,11 +30,18 @@ npm run build      # static site in dist/
   same torrent from several sources becomes one row (most seeders wins), and results are filtered to the episode,
   season pack or movie asked for. TorrentGalaxy is read from its HTML pages: its search list has no info-hashes, so
   the detail pages of the best 8 matches are read for theirs (4 at a time); pages it redirects away are skipped.
-- `src/lib/library.ts` — reads every folder in put.io, matches each video to TMDB (once per name), and keeps watch
-  positions and video lengths for the watched bars. Ported from the iPhone app's LibraryIndex.
+- `src/lib/library.ts` — reads what `src/lib/libraryScope.ts` covers (Movies and TV Series at the top of put.io, any
+  folders picked in Settings, and videos loose at the top; other folders show only in Files), matches each video to
+  TMDB (once per name), and keeps watch positions and video lengths for the watched bars. Ported from the iPhone
+  app's LibraryIndex.
 - `src/lib/releaseName.ts`, `src/lib/matcher.ts`, `src/lib/smartGet.ts` — release-name parsing, title matching and
-  Get & Watch's choice of release, as in the iPhone app. Files go to the same put.io folders (AMDB/Movies,
-  AMDB/TV/<Show>/Season N).
+  Get & Watch's choice of release, as in the iPhone app. Files go to the same put.io folders (`Movies`,
+  `TV Series/<Show>/Season N`; `src/lib/folders.ts`), found ignoring case and created when missing.
+- `src/lib/folderMerge.ts`, `src/lib/folderMergeRun.ts`, `src/state/oldFolderMerge.ts` — the one-time merge of the
+  folders older builds used (AMDB/Movies, AMDB/TV) into Movies and TV Series, once per put.io account in a browser:
+  a pure planner (same-named folders merge, a taken file name moves as "Name (from AMDB).ext", emptied folders go
+  to put.io's Trash; nothing else in AMDB is touched) and the runner that calls put.io and stops at the first
+  failed move, to continue next time.
 - `src/pages/` — Home, Movies, TV, Coming Up, Search, Library, Files, title page, player, Settings, sign-in.
 - `src/pages/Settings.tsx`, `src/components/settings/` — Settings as a hub of pages, like the iPhone app (the open page is
   `?page=…`): Playback (auto-play, audio language), Subtitles (language, style with a preview, OpenSubtitles API key),
