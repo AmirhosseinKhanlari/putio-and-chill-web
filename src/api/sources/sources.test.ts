@@ -9,6 +9,7 @@ import { allowsMethod, forwardHeaders, isSubtitleFileURL, proxyTargets, proxyURL
 import { torrentsCSV } from "./torrentscsv";
 import { matchesQuery, searchText, type Release, type SourceProvider } from "./types";
 import { yts } from "./yts";
+import { ChillClient } from "../chill";
 
 const HASH = "2770fe270845674966e184be60ed1be0fe494f3a";
 const row = (name: string, extra: Partial<Release> = {}): Release => ({ name, link: `magnet:?xt=urn:btih:${HASH}`, infoHash: HASH, sources: ["A"], parsed: parseReleaseName(name), ...extra });
@@ -130,7 +131,7 @@ describe("providers", () => {
       { id: "0", name: "No results returned", info_hash: "0".repeat(40), seeders: "0", size: "0" },
     ]);
     const rows = await apibay.releases({ kind: "movie", title: "Dune: Part Two", year: 2024 });
-    expect(String(fetch.mock.calls[0][0])).toBe("/proxy/apibay/q.php?q=Dune%3A+Part+Two+2024&cat=0");
+    expect(String(fetch.mock.calls[0][0])).toBe("/proxy/apibay/q.php?q=Dune+Part+Two+2024&cat=0");
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ seeders: 946, sizeBytes: 2968337547, sources: ["TPB"], infoHash: HASH });
   });
@@ -141,7 +142,7 @@ describe("providers", () => {
     const [url, init] = fetch.mock.calls[0];
     expect(url).toBe("/proxy/knaben/v1");
     expect(init?.method).toBe("POST");
-    expect(JSON.parse(String(init?.body))).toMatchObject({ query: "Dune: Part Two 2024", search_field: "title", size: 50 });
+    expect(JSON.parse(String(init?.body))).toMatchObject({ query: "Dune Part Two 2024", search_field: "title", size: 50 });
     expect(rows[0]).toMatchObject({ infoHash: HASH, seeders: 3, sources: ["Knaben"] });
   });
 
@@ -180,5 +181,84 @@ describe("proxy", () => {
     expect(isSubtitleFileURL("https://evilopensubtitles.com/x")).toBe(false);
     expect(isSubtitleFileURL("https://user@dl.opensubtitles.com/x")).toBe(false);
     expect(isSubtitleFileURL(null)).toBe(false);
+  });
+});
+
+/** Shows TMDB has no IMDb id for ("Monster: The Ed Gein Story", TMDB 286801) are searched by title. */
+describe("without an IMDb id", () => {
+  const edGein = "Monster: The Ed Gein Story";
+  const episode = { kind: "episode", title: edGein, season: 1, episode: 1 } as const;
+  const season = { kind: "season", title: edGein, season: 1 } as const;
+
+  it("searches the title without punctuation", () => {
+    expect(searchText(episode)).toBe("Monster The Ed Gein Story S01E01");
+    expect(searchText(season)).toBe("Monster The Ed Gein Story S01");
+    expect(searchText({ kind: "movie", title: "Dune: Part Two", year: 2024 })).toBe("Dune Part Two 2024");
+  });
+
+  it("keeps only releases that name the show", () => {
+    expect(matchesQuery(parseReleaseName("Monster The Ed Gein Story S01E01 1080p WEB h264-ETHEL"), episode)).toBe(true);
+    expect(matchesQuery(parseReleaseName("Monster.The.Ed.Gein.Story.S01E01.720p.NF.WEB-DL"), episode)).toBe(true);
+    expect(matchesQuery(parseReleaseName("Monster S01E01 1080p BluRay"), episode)).toBe(false);
+    expect(matchesQuery(parseReleaseName("Wednesday S01E01 1080p WEB"), episode)).toBe(false);
+    expect(matchesQuery(parseReleaseName("Monster The Ed Gein Story S01 1080p NF WEB-DL"), season)).toBe(true);
+    expect(matchesQuery(parseReleaseName("Monster 2022 S03 1080p NF WEB-DL DDP5 1 Atmos H 264-GP-TV"), season)).toBe(false);
+  });
+
+  it("chill: falls back to its per-indexer text search, never the IMDb endpoints", async () => {
+    const fetch = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (url.endsWith("/GetIndexers")) return new Response(JSON.stringify({ indexers: [{ id: "tpb", name: "TPB", enabled: true }, { id: "off", name: "Off", enabled: false }] }));
+      if (url.endsWith("/Search")) {
+        return new Response(JSON.stringify({ results: [
+          { title: "Monster The Ed Gein Story S01E01 1080p WEB h264-ETHEL", indexer: "tpb", link: `magnet:?xt=urn:btih:${"1".repeat(40)}`, seeders: "500", size: "2000000000" },
+          { title: "Monster S01E01 1080p BluRay", indexer: "tpb", link: `magnet:?xt=urn:btih:${"2".repeat(40)}`, seeders: "50", size: "1000000000" },
+        ] }));
+      }
+      return new Response("", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const rows = await new ChillClient("token").releases(episode);
+    expect(rows.map((r) => r.seeders)).toEqual([500]);
+    const searches = fetch.mock.calls.filter(([url]) => url.endsWith("/Search"));
+    expect(searches).toHaveLength(1);
+    expect(JSON.parse(String(searches[0][1]?.body))).toEqual({ query: "Monster The Ed Gein Story S01E01", indexerId: "tpb" });
+    expect(fetch.mock.calls.some(([url]) => /GetTVShow/.test(url))).toBe(false);
+  });
+
+  it("chill: still uses the episode endpoint with an IMDb id", async () => {
+    const fetch = mockFetch({ download: { title: "Severance S02E04 1080p", link: "magnet:?xt=urn:btih:x", seeders: 9 } });
+    const rows = await new ChillClient("token").releases({ kind: "episode", title: "Severance", imdbID: "tt11280740", season: 2, episode: 4 });
+    expect(String(fetch.mock.calls[0][0])).toMatch(/GetTVShowEpisodeDownload$/);
+    expect(rows.map((r) => r.name)).toEqual(["Severance S02E04 1080p"]);
+  });
+
+  it("EZTV: skips without asking (its API only takes IMDb ids)", async () => {
+    const fetch = mockFetch({ torrents: [] });
+    expect(await eztv.releases(season)).toEqual([]);
+    expect(await eztv.releases({ ...episode, imdbID: "" })).toEqual([]);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("YTS: searches by title and keeps that title within a year", async () => {
+    const fetch = mockFetch({ data: { movies: [
+      { title: "Heat", year: 1995, torrents: [{ hash: "0123456789ABCDEF0123456789ABCDEF01234567", quality: "1080p", seeds: 10, size_bytes: 1 }] },
+      { title: "Heat", year: 2013, torrents: [{ hash: "89ABCDEF0123456789ABCDEF0123456789ABCDEF", quality: "1080p", seeds: 5, size_bytes: 1 }] },
+      { title: "Heat Wave", year: 1995, torrents: [{ hash: "F".repeat(40), quality: "720p", seeds: 1, size_bytes: 1 }] },
+    ] } });
+    const rows = await yts.releases({ kind: "movie", title: "Heat", year: 1995 });
+    expect(rows.map((r) => r.infoHash)).toEqual(["0123456789abcdef0123456789abcdef01234567"]);
+    const url = new URL(String(fetch.mock.calls[0][0]));
+    expect(url.searchParams.get("query_term")).toBe("Heat");
+    expect(url.searchParams.get("limit")).toBe("20");
+  });
+
+  it("apibay: searches by name and drops other shows' episodes", async () => {
+    const fetch = mockFetch([
+      { id: "1", name: "Monster The Ed Gein Story S01E01 1080p WEB h264-ETHEL", info_hash: "A".repeat(40), seeders: "900", size: "3000000000" },
+      { id: "2", name: "Monster S01E01 Herr Dr Tenma", info_hash: "B".repeat(40), seeders: "20", size: "900000000" },
+    ]);
+    const rows = await apibay.releases(episode);
+    expect(rows.map((r) => r.seeders)).toEqual([900]);
+    expect(new URL(String(fetch.mock.calls[0][0]), "http://x").searchParams.get("q")).toBe("Monster The Ed Gein Story S01E01");
   });
 });

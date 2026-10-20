@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createContext, useCallback, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
-import { tmdb, type CatalogItem } from "../api/tmdb";
+import { tmdb, type CatalogItem, type MediaKind } from "../api/tmdb";
 import { library, type LibraryEntry } from "../lib/library";
 import { libraryScope } from "../lib/libraryScope";
 import { positionSync } from "../lib/positionSync";
@@ -40,9 +40,13 @@ function everyMinute(check: () => void) {
   };
 }
 
+/** How the library looks files up on TMDB (also Fix Match's Match Automatically). */
+export const catalogSearch = (kind: MediaKind, title: string, year?: number) => tmdb.searchKind(kind, title, year);
+export const catalogSeasonCount = (tmdbID: number) => tmdb.seasonCount(tmdbID);
+
 /** `afterChanges`: put.io just changed, so a refresh already running (which may have read the old state) doesn't count. */
 export function refreshLibrary(putio: NonNullable<ReturnType<typeof useSession>["putio"]>, afterChanges = false) {
-  return library.refresh(putio, (kind, title, year) => tmdb.searchKind(kind, title, year), libraryScope(loadSettings()), { afterChanges });
+  return library.refresh(putio, catalogSearch, libraryScope(loadSettings()), { afterChanges, seasonCount: catalogSeasonCount });
 }
 
 /** Positions saved on other devices, read without reading all of put.io: when the app opens, when it comes back

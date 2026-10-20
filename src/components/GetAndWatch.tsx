@@ -3,9 +3,10 @@ import { createRoot } from "react-dom/client";
 import { useNavigate } from "react-router-dom";
 import { enabledProviders, releaseKey, searchReleases, sortReleases, sourceNames, type ReleaseSnapshot, type ReleaseSort } from "../api/sources";
 import type { Release, ReleaseQuery } from "../api/sources/types";
-import { hasTMDB, tmdb, type CatalogItem } from "../api/tmdb";
+import { hasTMDB, tmdb } from "../api/tmdb";
 import { bytes } from "../lib/format";
 import { resolutionLabel } from "../lib/releaseName";
+import { noQueryMessage, noVersionsMessage, releaseQuery, type GetTarget } from "../lib/releaseQuery";
 import { loadSettings, qualityName, useSettings } from "../lib/settings";
 import { displayPath, pickRelease, sendToPutio } from "../lib/smartGet";
 import { useToast } from "../state/hooks";
@@ -13,22 +14,7 @@ import { useSession } from "../state/session";
 import { CloseIcon } from "./Icons";
 import "../styles/versions.css";
 
-export interface GetTarget {
-  item: CatalogItem;
-  imdbID?: string;
-  season?: number;
-  episode?: number;
-  /** Free text from Search ("Search releases for …"): every release that matches, not one title. */
-  text?: string;
-}
-
-export function releaseQuery(t: GetTarget): ReleaseQuery | undefined {
-  if (t.text) return { kind: "text", text: t.text };
-  const { title } = t.item;
-  if (t.item.kind === "movie") return { kind: "movie", title, year: t.item.year, imdbID: t.imdbID };
-  if (t.season === undefined) return undefined;
-  return t.episode !== undefined ? { kind: "episode", title, imdbID: t.imdbID, season: t.season, episode: t.episode } : { kind: "season", title, imdbID: t.imdbID, season: t.season };
-}
+export type { GetTarget } from "../lib/releaseQuery";
 
 /** YTS looks movies up by IMDb id; callers that only have the TMDB item (Home's hero) get it here, once per movie. */
 const imdbIDs = new Map<number, Promise<string | undefined>>();
@@ -41,9 +27,12 @@ async function withIMDbID(target: GetTarget): Promise<GetTarget> {
 
 const label = (t: GetTarget) => (t.episode !== undefined ? `S${t.season} E${t.episode}` : t.season !== undefined ? `Season ${t.season}` : t.item.title);
 
+/** A finished search, with the query it ran (for the "no versions" explanation). */
+type SearchResult = ReleaseSnapshot & { query: ReleaseQuery };
+
 /** What the Versions list needs from the page that opened it. */
 interface VersionsDeps {
-  search: (target: GetTarget, onUpdate: (s: ReleaseSnapshot) => void, signal: AbortSignal) => Promise<ReleaseSnapshot>;
+  search: (target: GetTarget, onUpdate: (s: ReleaseSnapshot) => void, signal: AbortSignal) => Promise<SearchResult>;
   send: (target: GetTarget, release: Release) => Promise<void>;
   openSettings: (page: string) => void;
 }
@@ -58,12 +47,12 @@ export function useGetAndWatch() {
   const [busy, setBusy] = useState(false);
   const canGet = Boolean(putio) && enabledProviders(settings, chill).length > 0;
 
-  async function search(target: GetTarget, options: { onUpdate?: (s: ReleaseSnapshot) => void; signal?: AbortSignal } = {}): Promise<ReleaseSnapshot> {
+  async function search(target: GetTarget, options: { onUpdate?: (s: ReleaseSnapshot) => void; signal?: AbortSignal } = {}): Promise<SearchResult> {
     const providers = enabledProviders(loadSettings(), chill);
     if (!providers.length) throw new Error("Every source is turned off. Turn one on in Settings → Sources.");
     const query = releaseQuery(await withIMDbID(target));
-    if (!query) throw new Error("Pick a season or an episode to search for.");
-    return searchReleases(query, providers, options);
+    if (!query) throw new Error(noQueryMessage(target));
+    return { ...(await searchReleases(query, providers, options)), query };
   }
 
   /** Every release found; throws only when nothing was found because every source failed. */
@@ -104,7 +93,7 @@ export function useGetAndWatch() {
         toast(`Nothing fits Smart Get (${qualityName(current.smartGet.resolution)}${current.smartGet.maxSizeGB ? `, up to ${current.smartGet.maxSizeGB} GB` : ""}). Pick a version.`);
         openVersions(target, deps);
       } else {
-        toast(snapshot.failures.length === enabledProviders(current, chill).length ? "No source answered. Try again in a minute." : "No versions found.");
+        toast(snapshot.failures.length === enabledProviders(current, chill).length ? "No source answered. Try again in a minute." : noVersionsMessage(snapshot.query, snapshot.failures));
       }
     } catch (error) {
       toast(error instanceof Error ? error.message : "Couldn't get it right now.");
@@ -137,6 +126,8 @@ const sorts: { id: ReleaseSort; name: string }[] = [{ id: "seeders", name: "Most
 function VersionsPanel({ target, deps, onClose }: { target: GetTarget; deps: VersionsDeps; onClose: () => void }) {
   const settings = useSettings();
   const [snapshot, setSnapshot] = useState<ReleaseSnapshot>({ releases: [], failures: [], pending: [] });
+  // Known once the search ends (a movie's IMDb id may be looked up first).
+  const [query, setQuery] = useState<ReleaseQuery>();
   const [started, setStarted] = useState(false);
   const [error, setError] = useState<string>();
   const [resolution, setResolution] = useState<number | null>(settings.defaultResolution);
@@ -147,6 +138,7 @@ function VersionsPanel({ target, deps, onClose }: { target: GetTarget; deps: Ver
   useEffect(() => {
     const controller = new AbortController();
     deps.search(target, (s) => { setStarted(true); setSnapshot(s); }, controller.signal)
+      .then((result) => setQuery(result.query))
       .catch((e) => { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : "Search failed."); });
     return () => controller.abort();
     // One search per opened dialog.
@@ -222,7 +214,7 @@ function VersionsPanel({ target, deps, onClose }: { target: GetTarget; deps: Ver
 
         {error && <p className="error-text">{error} {settingsLink("sources", "Open Settings")}</p>}
         {allFailed && <p className="error-text">{snapshot.failures.map((f) => f.message).join(" ")} {settingsLink("sources", "Check sources")}</p>}
-        {!searching && !error && !allFailed && !snapshot.releases.length && <p className="muted">No versions found.</p>}
+        {!searching && !error && !allFailed && !snapshot.releases.length && <p className="muted">{noVersionsMessage(query)}</p>}
         {!searching && resolution !== null && snapshot.releases.length > 0 && !rows.length && (
           <p className="muted">None in {qualityName(resolution)} yet. <button type="button" className="link-button" onClick={() => setResolution(null)}>Show all</button></p>
         )}

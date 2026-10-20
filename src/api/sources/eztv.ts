@@ -1,8 +1,9 @@
 /** EZTV (port of the iPhone app's EZTVProvider): episodes and season packs of a show, by IMDb id, up to three pages
- * of 100. Allows browser requests, so it's called directly. */
+ * of 100. Allows browser requests, so it's called directly. Its API only looks shows up by IMDb id, so a show without
+ * one is skipped (the text sources cover it). */
 import { parseReleaseName } from "../../lib/releaseName";
 import { makeMagnet, normalizeHash } from "./magnet";
-import { fetchJSON, lossyNumber, type Release, type ReleaseQuery, type SourceProvider } from "./types";
+import { fetchJSON, lossyNumber, queryIMDbID, type Release, type ReleaseQuery, type SourceProvider } from "./types";
 
 const BASE = "https://eztvx.to";
 const PAGE_SIZE = 100;
@@ -16,8 +17,9 @@ interface Torrent {
 export const eztv: SourceProvider = {
   id: "eztv",
   async releases(query: ReleaseQuery, signal?: AbortSignal): Promise<Release[]> {
-    if ((query.kind !== "episode" && query.kind !== "season") || !query.imdbID) return [];
-    const digits = query.imdbID.replace(/^tt/, "");
+    const imdbID = queryIMDbID(query);
+    if ((query.kind !== "episode" && query.kind !== "season") || !imdbID) return [];
+    const digits = imdbID.replace(/^tt/, "");
     const torrents: Torrent[] = [];
     for (let page = 1; page <= MAX_PAGES; page++) {
       const url = new URL(`${BASE}/api/get-torrents`);

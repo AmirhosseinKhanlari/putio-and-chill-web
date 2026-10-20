@@ -4,10 +4,13 @@ import { Link } from "react-router-dom";
 import { image } from "../api/tmdb";
 import type { PutioTransfer } from "../api/putio";
 import { EntryCard, playPath, Poster, titlePath } from "../components/Cards";
-import { CloseIcon, FolderIcon, PlayIcon, RefreshIcon } from "../components/Icons";
+import { Menu, placeUnder, type MenuPlace } from "../components/files/Menu";
+import { FixMatchDialog } from "../components/FixMatch";
+import { CloseIcon, FolderIcon, MoreIcon, PlayIcon, RefreshIcon } from "../components/Icons";
 import { TopBar } from "../components/TopBar";
 import { bytes, speed } from "../lib/format";
 import type { LibraryEntry } from "../lib/library";
+import { entriesRequest, type FixMatchRequest } from "../lib/matchOverrides";
 import { pendingTransfers, savePendingTransfers } from "../lib/smartGet";
 import { refreshLibrary, useAccount, useLibrary, useMyList, useToast } from "../state/hooks";
 import { usePutio } from "../state/session";
@@ -20,6 +23,8 @@ export function Library() {
   const account = useAccount();
   const myList = useMyList();
   const [filter, setFilter] = useState<Filter>("all");
+  const [cardMenu, setCardMenu] = useState<{ entries: LibraryEntry[]; label: string; place: MenuPlace } | null>(null);
+  const [fixing, setFixing] = useState<FixMatchRequest | null>(null);
   const disk = account.data?.disk;
 
   // One card per movie or show (a show's card opens it); unmatched videos play.
@@ -75,19 +80,37 @@ export function Library() {
           <div className="grid">
             {cards.map((g) => {
               const first = g[0];
+              const label = first.match?.title ?? first.name;
+              // Fix Match: a movie or file card is one file; a show card is all its files.
+              const more = (
+                <button type="button" className="round-button library-card-more" aria-label={`More for ${label}`} aria-haspopup="menu"
+                  aria-expanded={cardMenu?.entries[0].id === first.id}
+                  onClick={(e) => { const place = placeUnder(e.currentTarget); setCardMenu((open) => (open?.entries[0].id === first.id ? null : { entries: g, label, place })); }}>
+                  <MoreIcon size={18} />
+                </button>
+              );
               if (first.match?.kind === "tv") {
                 const item = { tmdbID: first.match.tmdbID, kind: "tv" as const, title: first.match.title };
                 return (
-                  <Link key={`tv-${first.match.tmdbID}`} to={titlePath(item)} className="card">
-                    <Poster path={first.match.posterPath} title={first.match.title}><span className="count-badge">{g.length}</span></Poster>
-                    <span className="card-caption">{first.match.title} · {g.length} episode{g.length === 1 ? "" : "s"}</span>
-                  </Link>
+                  <div key={`tv-${first.match.tmdbID}`} className="library-card">
+                    <Link to={titlePath(item)} className="card">
+                      <Poster path={first.match.posterPath} title={first.match.title}><span className="count-badge">{g.length}</span></Poster>
+                      <span className="card-caption">{first.match.title} · {g.length} episode{g.length === 1 ? "" : "s"}</span>
+                    </Link>
+                    {more}
+                  </div>
                 );
               }
-              return <EntryCard key={first.id} entry={first} />;
+              return <div key={first.id} className="library-card"><EntryCard entry={first} />{more}</div>;
             })}
           </div>
         </section>
+
+        {cardMenu && (
+          <Menu label={`Actions for ${cardMenu.label}`} place={cardMenu.place} onClose={() => setCardMenu(null)}
+            items={[{ label: "Fix Match…", onSelect: () => setFixing(entriesRequest(cardMenu.entries)) }]} />
+        )}
+        {fixing && <FixMatchDialog request={fixing} onClose={() => setFixing(null)} />}
 
         {myList.items.length > 0 && (
           <section className="stack">

@@ -146,6 +146,10 @@ export const tmdb = {
       numberOfSeasons: raw.number_of_seasons,
     };
   },
+  /** How many seasons a show has; undefined when TMDB doesn't say. */
+  async seasonCount(id: number): Promise<number | undefined> {
+    return (await get<{ number_of_seasons?: number }>(`tv/${id}`)).number_of_seasons ?? undefined;
+  },
   async season(id: number, season: number): Promise<Episode[]> {
     const raw = await get<{ episodes: { episode_number: number; name: string; overview?: string; still_path?: string | null; runtime?: number | null; air_date?: string | null; vote_average?: number }[] }>(`tv/${id}/season/${season}`);
     return raw.episodes.map((e) => ({

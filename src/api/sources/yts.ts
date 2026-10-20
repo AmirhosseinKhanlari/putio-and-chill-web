@@ -2,7 +2,8 @@
  * Allows browser requests, so it's called directly. */
 import { parseReleaseName } from "../../lib/releaseName";
 import { makeMagnet, normalizeHash } from "./magnet";
-import { fetchJSON, matchesQuery, type Release, type ReleaseQuery, type SourceProvider } from "./types";
+import { searchTitle, titleWords } from "../../lib/showTitle";
+import { fetchJSON, queryIMDbID, type Release, type ReleaseQuery, type SourceProvider } from "./types";
 
 const BASE = "https://movies-api.accel.li";
 
@@ -15,11 +16,18 @@ export const yts: SourceProvider = {
   id: "yts",
   async releases(query: ReleaseQuery, signal?: AbortSignal): Promise<Release[]> {
     if (query.kind !== "movie") return [];
+    const imdbID = queryIMDbID(query);
+    const term = imdbID ?? searchTitle(query.title);
+    if (!term) return [];
     const url = new URL(`${BASE}/api/v2/list_movies.json`);
-    url.searchParams.set("query_term", query.imdbID ?? query.title);
-    url.searchParams.set("limit", "5");
+    url.searchParams.set("query_term", term);
+    url.searchParams.set("limit", imdbID ? "5" : "20");
     const response = await fetchJSON<Response>("yts", url.toString(), { signal });
-    return (response.data?.movies ?? []).flatMap((movie) =>
+    // By IMDb id it's the right movie; by title YTS also returns others, so only that title (and year, ±1) stays.
+    const wanted = titleWords(query.title).join("");
+    const movies = (response.data?.movies ?? []).filter((movie) => imdbID
+      || (titleWords(movie.title).join("") === wanted && (query.year === undefined || Math.abs(movie.year - query.year) <= 1)));
+    return movies.flatMap((movie) =>
       (movie.torrents ?? []).flatMap((t): Release[] => {
         const hash = normalizeHash(t.hash);
         if (!hash) return [];
@@ -28,8 +36,6 @@ export const yts: SourceProvider = {
         const parsed = parseReleaseName(name);
         parsed.title = movie.title;
         parsed.codec = t.video_codec?.toLowerCase() === "x265" ? "H.265" : "H.264";
-        // By IMDb id it's the right movie; by title YTS also returns others.
-        if (!query.imdbID && !matchesQuery(parsed, query)) return [];
         return [{ name, link: makeMagnet(hash, movie.title), infoHash: hash, sizeBytes: t.size_bytes, seeders: t.seeds, sources: ["YTS"], parsed }];
       }),
     );

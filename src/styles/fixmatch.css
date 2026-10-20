@@ -1,0 +1,24 @@
+/* Fix Match (components/FixMatch.tsx). Builds on styles.css and files.css: dialog, text-field, select, pill. */
+.fix-match-name { overflow-wrap: anywhere; }
+.fix-match-search { display: flex; gap: 8px; align-items: center; }
+.fix-match-search .text-field { flex: 1; min-width: 0; }
+.fix-match-results { min-height: 120px; max-height: 40vh; overflow-y: auto; margin: 0 -8px; padding: 0 8px; }
+.fix-match-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.fix-match-row { width: 100%; display: flex; align-items: center; gap: 12px; padding: 8px 10px; border: none; border-radius: 10px; background: none; color: #fff; text-align: left; cursor: pointer; }
+button.fix-match-row:hover { background: rgba(255, 255, 255, 0.08); }
+.fix-match-chosen { background: rgba(255, 255, 255, 0.06); cursor: default; }
+.fix-match-thumb { flex: none; width: 40px; height: 60px; border-radius: 6px; object-fit: cover; background: #1d2430; }
+.fix-match-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.fix-match-text .strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fix-match-change { flex: none; padding: 0; border: none; background: none; color: inherit; text-decoration: underline; cursor: pointer; }
+.fix-match-field { display: flex; flex-direction: column; gap: 6px; }
+.fix-match-targets { border: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.fix-match-targets legend { padding: 0; margin-bottom: 6px; }
+.fix-match-target { display: flex; align-items: center; gap: 10px; font-size: 14px; overflow-wrap: anywhere; cursor: pointer; }
+.fix-match-target input { flex: none; accent-color: #fff; }
+
+/* The ⋯ on Library cards. */
+.library-card { position: relative; min-width: 0; }
+.library-card > .card { width: auto; }
+.library-card-more.round-button { position: absolute; top: 6px; right: 6px; width: 34px; height: 34px; background: rgba(0, 0, 0, 0.6); z-index: 1; }
+.library-card-more.round-button:hover, .library-card-more.round-button:focus-visible { background: rgba(0, 0, 0, 0.85); }

@@ -1,6 +1,7 @@
 /** What every torrent source returns, and what it is asked for (the iPhone app's Release, MediaQuery and
  * ReleaseRelevance). */
 import type { ParsedRelease } from "../../lib/releaseName";
+import { sameShow, searchTitle } from "../../lib/showTitle";
 
 export type SourceID = "chill" | "yts" | "eztv" | "apibay" | "knaben" | "torrentscsv" | "torrentgalaxy";
 
@@ -17,6 +18,8 @@ export interface Release {
   parsed: ParsedRelease;
 }
 
+/** What to look for. The IMDb id is optional: TMDB has shows without one ("Monster: The Ed Gein Story"), and those are
+ * searched by title. Sources that only work by IMDb id skip such queries or fall back to their text search. */
 export type ReleaseQuery =
   | { kind: "movie"; title: string; year?: number; imdbID?: string }
   | { kind: "episode"; title: string; imdbID?: string; season: number; episode: number }
@@ -30,29 +33,36 @@ export interface SourceProvider {
 
 const two = (n: number) => String(n).padStart(2, "0");
 
-/** The words a free-text source is searched with ("Severance S02E04", "Dune Part Two 2024"). */
+/** The words a free-text source is searched with ("Severance S02E04", "Dune Part Two 2024"): the title without
+ * punctuation, then the year or SxxEyy. */
 export function searchText(query: ReleaseQuery): string {
   switch (query.kind) {
-    case "movie": return [query.title, query.year].filter(Boolean).join(" ");
-    case "episode": return `${query.title} S${two(query.season)}E${two(query.episode)}`;
-    case "season": return `${query.title} S${two(query.season)}`;
+    case "movie": return [searchTitle(query.title), query.year].filter(Boolean).join(" ");
+    case "episode": return `${searchTitle(query.title)} S${two(query.season)}E${two(query.episode)}`;
+    case "season": return `${searchTitle(query.title)} S${two(query.season)}`;
     case "text": return query.text;
   }
+}
+
+/** The query's IMDb id, when it has a real one ("" counts as none). */
+export function queryIMDbID(query: ReleaseQuery): string | undefined {
+  return query.kind !== "text" && query.imdbID ? query.imdbID : undefined;
 }
 
 const normTitle = (s: string) => s.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]/g, "");
 
 /** Keeps the free-text hits that are what was asked for: that episode (or a multi-episode file holding it), that
- * season's pack, or that movie within a year. Movies also need the same title, so a search for "Dune 2021" can't
- * pick a documentary about it (the iPhone app checks the year only). */
+ * season's pack, or that movie within a year. Episodes and packs must name the show (a search for "Monster The Ed
+ * Gein Story S01E01" also finds "Monster S01E01"). Movies also need the same title, so a search for "Dune 2021"
+ * can't pick a documentary about it (the iPhone app checks the year only). */
 export function matchesQuery(p: ParsedRelease, query: ReleaseQuery): boolean {
   switch (query.kind) {
     case "episode": {
-      if (p.season !== query.season || p.episode === undefined) return false;
+      if (p.season !== query.season || p.episode === undefined || !sameShow(p.title, query.title)) return false;
       return p.episode === query.episode || (p.episodeEnd !== undefined && query.episode >= p.episode && query.episode <= p.episodeEnd);
     }
     case "season":
-      return p.season === query.season && p.episode === undefined;
+      return p.season === query.season && p.episode === undefined && sameShow(p.title, query.title);
     case "movie":
       if (p.season !== undefined) return false;
       if (p.title && normTitle(p.title) !== normTitle(query.title)) return false;

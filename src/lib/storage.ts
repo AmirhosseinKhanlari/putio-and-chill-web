@@ -38,6 +38,8 @@ export const keys = {
   chillToken: "pc.chill.token",
   library: "pc.library.v1",
   matches: "pc.matches.v1",
+  /** Fix Match choices (matchOverrides.ts). */
+  matchOverrides: "pc.matchOverrides.v1",
   durations: "pc.durations.v1",
   positions: "pc.positions.v1",
   settings: "pc.settings.v1",

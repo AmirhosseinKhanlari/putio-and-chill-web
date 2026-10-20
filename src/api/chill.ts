@@ -2,7 +2,7 @@
  * season. Signing in goes through put.io on chill.institute and comes back with #auth_token=… on our address.
  * It's one of the sources in src/api/sources; Get & Watch also works without it. */
 import { parseReleaseName, type ParsedRelease } from "../lib/releaseName";
-import { lossyNumber, matchesQuery, searchText, type Release, type ReleaseQuery, type SourceProvider } from "./sources/types";
+import { lossyNumber, matchesQuery, queryIMDbID, searchText, type Release, type ReleaseQuery, type SourceProvider } from "./sources/types";
 
 export type { Release, ReleaseQuery } from "./sources/types";
 
@@ -84,16 +84,21 @@ export class ChillClient implements SourceProvider {
   }
 
   async releases(query: ReleaseQuery, signal?: AbortSignal): Promise<Release[]> {
-    if (query.kind === "episode") {
-      if (!query.imdbID) return [];
-      const r = await this.call<{ download?: TVShowDownload }>("GetTVShowEpisodeDownload", { imdbId: query.imdbID, seasonNumber: query.season, episodeNumber: query.episode }, signal);
+    // The TV endpoints look shows up by IMDb id; a show without one is searched by title like a movie.
+    const imdbID = queryIMDbID(query);
+    if (query.kind === "episode" && imdbID) {
+      const r = await this.call<{ download?: TVShowDownload }>("GetTVShowEpisodeDownload", { imdbId: imdbID, seasonNumber: query.season, episodeNumber: query.episode }, signal);
       return [r.download && fromDownload(r.download)].filter((x): x is Release => Boolean(x));
     }
-    if (query.kind === "season") {
-      if (!query.imdbID) return [];
-      const r = await this.call<{ seasonPack?: TVShowDownload }>("GetTVShowSeasonDownloads", { imdbId: query.imdbID, seasonNumber: query.season }, signal);
+    if (query.kind === "season" && imdbID) {
+      const r = await this.call<{ seasonPack?: TVShowDownload }>("GetTVShowSeasonDownloads", { imdbId: imdbID, seasonNumber: query.season }, signal);
       return [r.seasonPack && fromDownload(r.seasonPack)].filter((x): x is Release => Boolean(x));
     }
+    return this.searchAll(query, signal);
+  }
+
+  /** Free-text search on every enabled indexer, kept to what the query asked for. One indexer failing is fine. */
+  private async searchAll(query: ReleaseQuery, signal?: AbortSignal): Promise<Release[]> {
     const text = searchText(query);
     const indexers = await this.enabledIndexers(signal);
     const settled = await Promise.allSettled(indexers.map((i) => this.call<{ results?: SearchResult[] }>("Search", { query: text, indexerId: i.id }, signal)));

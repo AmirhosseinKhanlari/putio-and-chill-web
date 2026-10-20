@@ -4,7 +4,8 @@
 import { isFolder, isVideo, type PutioClient, type PutioFile } from "../api/putio";
 import type { MediaKind } from "../api/tmdb";
 import { includesTopLevelFolder, scopeSignature, standardScope, type LibraryScope } from "./libraryScope";
-import { normalizeTitle, pickMatch } from "./matcher";
+import { folderChain, noOverrides, overrideFor, withOverride, withoutOverrides, type FixMatchTarget, type MatchOverride, type MatchOverrides } from "./matchOverrides";
+import { normalizeTitle, pickMatch, pickShow } from "./matcher";
 import { deviceSave, mergePosition, putioRead, samePosition, type Position } from "./positions";
 import { parseReleaseName } from "./releaseName";
 import { keys, readJSON, writeJSON } from "./storage";
@@ -18,6 +19,8 @@ export interface LibraryMatch {
   year?: number;
   posterPath?: string | null;
   backdropPath?: string | null;
+  /** 1 for an exact match or a Fix Match choice; lower for a likely one. */
+  confidence?: number;
 }
 
 export interface LibraryEntry {
@@ -29,6 +32,8 @@ export interface LibraryEntry {
   startFrom: number;
   parentID?: number;
   folderName?: string;
+  /** The folder above `folderName` ("Show" for "Show/Season 2/E01.mkv"). */
+  grandparentName?: string;
   match?: LibraryMatch;
 }
 
@@ -39,10 +44,15 @@ interface Snapshot {
   scope?: string;
   /** Older builds' positions saved here, by file id (now in keys.positions). */
   progress?: Record<string, number>;
+  /** Folder id → the folder it's in, for the folders the walk read (Fix Match by folder). */
+  folders?: Record<string, number>;
 }
 
 type CachedMatch = Omit<LibraryMatch, "season" | "episode"> | null;
-type Searcher = (kind: MediaKind, title: string, year?: number) => Promise<{ tmdbID: number; title: string; year?: number; posterPath?: string | null; backdropPath?: string | null }[]>;
+type SearchResult = { tmdbID: number; title: string; year?: number; posterPath?: string | null; backdropPath?: string | null };
+type Searcher = (kind: MediaKind, title: string, year?: number) => Promise<SearchResult[]>;
+/** A show's number of seasons (TMDB's number_of_seasons); undefined when unknown. */
+export type SeasonCounter = (tmdbID: number) => Promise<number | undefined>;
 
 const SKIPPED_FOLDERS = new Set(["subs", "subtitles", "sub", "sample", "samples", "screens", "screenshots", "proof", "artwork", "covers"]);
 const MAX_FOLDERS = 2000;
@@ -55,6 +65,12 @@ function seasonOfFolder(name: string): number | undefined {
   return m ? Number(m[1]) : undefined;
 }
 
+/** A season-pack episode's number from a short name: "E04 - Title" or "04. Title". */
+function episodeInName(fileName: string): number | undefined {
+  const found = /\bE(\d{1,3})\b/i.exec(fileName)?.[1] ?? /^(\d{1,3})[ .\-_]/.exec(fileName)?.[1];
+  return found ? Number(found) : undefined;
+}
+
 /** What a video's name (and its folders) say it is. Season-pack episodes are often named only "E04 - Title" or
  * "04. Title" inside "Show.S02.1080p" or "Show/Season 2". */
 export function describeVideo(fileName: string, folderName?: string, grandparentName?: string) {
@@ -62,22 +78,43 @@ export function describeVideo(fileName: string, folderName?: string, grandparent
   if (parsed.season !== undefined && parsed.title) return parsed;
   const folder = folderName ? parseReleaseName(folderName) : undefined;
   const folderSeason = folderName ? seasonOfFolder(folderName) : undefined;
-  const episode = /\bE(\d{1,3})\b/i.exec(fileName)?.[1] ?? /^(\d{1,3})[ .\-_]/.exec(fileName)?.[1];
+  const episode = episodeInName(fileName);
   if (folder && folder.season !== undefined && folder.title && episode) {
-    return { ...parsed, title: folder.title, season: folder.season, episode: Number(episode) };
+    return { ...parsed, title: folder.title, season: folder.season, episode };
   }
   if (folderSeason !== undefined && grandparentName && episode) {
-    return { ...parsed, title: parseReleaseName(grandparentName).title, season: folderSeason, episode: Number(episode) };
+    return { ...parsed, title: parseReleaseName(grandparentName).title, season: folderSeason, episode };
   }
   return parsed;
+}
+
+/** A Fix Match choice as one file's match. Episodes come from the name (as in season packs); a show file without a
+ * season anywhere is season 1. */
+export function applyOverride(chosen: MatchOverride, fileName: string, folderName?: string, grandparentName?: string): LibraryMatch {
+  const base = { tmdbID: chosen.tmdbID, title: chosen.title, year: chosen.year, posterPath: chosen.posterPath, backdropPath: chosen.backdropPath, confidence: 1 };
+  if (chosen.mediaType === "movie") return { ...base, kind: "movie" };
+  const named = describeVideo(fileName, folderName, grandparentName);
+  return { ...base, kind: "tv", season: chosen.season ?? named.season ?? 1, episode: named.episode ?? episodeInName(fileName) };
+}
+
+/** The automatic-match cache key: movies by title and year; shows by title, the year in the name and the season,
+ * which together decide the pick (pickShow). */
+function matchKey(parsed: { title: string; year?: number; season?: number }): string {
+  const title = normalizeTitle(parsed.title);
+  return parsed.season === undefined ? `movie|${title}|${parsed.year ?? ""}` : `tv|${title}|${parsed.year ?? ""}|s${parsed.season}`;
 }
 
 export class LibraryIndex {
   private snapshot: Snapshot = readJSON<Snapshot>(keys.library, { entries: [], updatedAt: 0 });
   private matches = readJSON<Record<string, CachedMatch>>(keys.matches, {});
+  private overrides = readJSON<MatchOverrides>(keys.matchOverrides, noOverrides());
   private durations = readJSON<Record<string, number>>(keys.durations, {});
   private positions = this.loadPositions();
   private lookups = new Map<string, Promise<CachedMatch | undefined>>();
+  /** TMDB searches of this update: every episode of a show asks the same one. */
+  private searches = new Map<string, Promise<SearchResult[]>>();
+  /** Show id → number of seasons, once per show (a failed lookup is retried next time). */
+  private seasonCounts = new Map<number, Promise<number | undefined>>();
   private listeners = new Set<() => void>();
   private refreshing?: Promise<void>;
   isRefreshing = false;
@@ -225,17 +262,21 @@ export class LibraryIndex {
   clear() {
     this.snapshot = { entries: [], updatedAt: 0 };
     this.positions = {};
+    // Fix Match choices name this account's files and folders.
+    this.overrides = noOverrides();
     writeJSON(keys.library, this.snapshot);
     writeJSON(keys.positions, this.positions);
+    writeJSON(keys.matchOverrides, this.overrides);
     this.emit();
   }
 
   // MARK: Refreshing
 
-  /** `afterChanges`: put.io just changed (the folder merge), so an update already running doesn't count. */
-  refresh(putio: PutioClient, search: Searcher, scope: LibraryScope = standardScope, options: { afterChanges?: boolean } = {}): Promise<void> {
-    if (options.afterChanges && this.refreshing) return this.refreshing.then(() => this.refresh(putio, search, scope));
-    this.refreshing ??= this.run(putio, search, scope).finally(() => {
+  /** `afterChanges`: put.io just changed (the folder merge), so an update already running doesn't count.
+   * `seasonCount` lets a show without the file's season be ruled out (pickShow). */
+  refresh(putio: PutioClient, search: Searcher, scope: LibraryScope = standardScope, options: { afterChanges?: boolean; seasonCount?: SeasonCounter } = {}): Promise<void> {
+    if (options.afterChanges && this.refreshing) return this.refreshing.then(() => this.refresh(putio, search, scope, { seasonCount: options.seasonCount }));
+    this.refreshing ??= this.run(putio, search, scope, options.seasonCount).finally(() => {
       this.refreshing = undefined;
       this.isRefreshing = false;
       this.progressText = "";
@@ -244,16 +285,18 @@ export class LibraryIndex {
     return this.refreshing;
   }
 
-  private async run(putio: PutioClient, search: Searcher, scope: LibraryScope) {
+  private async run(putio: PutioClient, search: Searcher, scope: LibraryScope, seasonCount?: SeasonCounter) {
     this.isRefreshing = true;
     const startedAt = Date.now();
     const refreshedBefore = this.snapshot.updatedAt > 0;
     this.lookups.clear();
+    this.searches.clear();
     this.progressText = "Reading your put.io…";
     this.emit();
     let videos: Awaited<ReturnType<LibraryIndex["walk"]>>;
+    const folders: Record<string, number> = {};
     try {
-      videos = await this.walk(putio, scope);
+      videos = await this.walk(putio, scope, folders);
     } catch {
       return; // put.io couldn't be read: keep the library from last time.
     }
@@ -265,16 +308,19 @@ export class LibraryIndex {
       while (next < videos.length) {
         const index = next++;
         const { file, folder, grandparent } = videos[index];
+        // Fix Match choices come first: those files are never looked up.
+        const chosen = overrideFor(this.overrides, file, folderChain(file.parent_id, folders));
         entries[index] = {
           id: file.id, name: file.name, size: file.size, createdAt: file.created_at, updatedAt: file.updated_at,
-          startFrom: file.start_from ?? 0, parentID: file.parent_id, folderName: folder,
-          match: await this.match(file.name, folder, grandparent, search),
+          startFrom: file.start_from ?? 0, parentID: file.parent_id, folderName: folder, grandparentName: grandparent,
+          match: chosen ? applyOverride(chosen, file.name, folder, grandparent) : await this.match(file.name, folder, grandparent, search, seasonCount),
         };
       }
     };
     await Promise.all(Array.from({ length: 4 }, worker));
     this.notePositionsFromList(entries, startedAt, refreshedBefore);
-    this.snapshot = { entries, updatedAt: Date.now(), scope: scopeSignature(scope) };
+    // A Fix Match made while this update ran wins too.
+    this.snapshot = { entries: this.withOverrides(entries, folders), updatedAt: Date.now(), scope: scopeSignature(scope), folders };
     writeJSON(keys.library, this.snapshot);
     writeJSON(keys.matches, this.matches);
   }
@@ -294,7 +340,7 @@ export class LibraryIndex {
 
   /** Breadth-first through what `scope` covers: the top of put.io (its loose videos and in-scope folders), everything
    * below those, and the folders picked in Settings. */
-  async walk(putio: Pick<PutioClient, "list">, scope: LibraryScope = standardScope) {
+  async walk(putio: Pick<PutioClient, "list">, scope: LibraryScope = standardScope, folders: Record<string, number> = {}) {
     const found: { file: PutioFile; folder?: string; grandparent?: string }[] = [];
     let queue: { id: number; name?: string; parentName?: string }[] = [
       { id: 0 },
@@ -316,6 +362,7 @@ export class LibraryIndex {
             const reads = atTop ? includesTopLevelFolder(scope, file) : !SKIPPED_FOLDERS.has(file.name.trim().toLowerCase());
             if (reads && !queued.has(file.id)) {
               queued.add(file.id);
+              folders[file.id] = batch[i].id;
               queue.push({ id: file.id, name: file.name, parentName: batch[i].name });
             }
           } else if (isVideo(file) && !/\bsample\b/i.test(file.name) && !seen.has(file.id)) {
@@ -331,22 +378,17 @@ export class LibraryIndex {
     return found;
   }
 
-  private async match(fileName: string, folder: string | undefined, grandparent: string | undefined, search: Searcher): Promise<LibraryMatch | undefined> {
+  private async match(fileName: string, folder: string | undefined, grandparent: string | undefined, search: Searcher, seasonCount?: SeasonCounter): Promise<LibraryMatch | undefined> {
     const parsed = describeVideo(fileName, folder, grandparent);
     if (!parsed.title) return undefined;
     const kind: MediaKind = parsed.season !== undefined ? "tv" : "movie";
-    const year = kind === "movie" ? parsed.year : undefined;
-    const key = `${kind}|${normalizeTitle(parsed.title)}|${year ?? ""}`;
+    const key = matchKey(parsed);
     let cached = this.matches[key];
     if (cached === undefined) {
       // Episodes of one show are matched side by side: they share one lookup.
       let lookup = this.lookups.get(key);
       if (!lookup) {
-        lookup = search(kind, parsed.title, year).then((results) => {
-          const best = pickMatch(results, parsed.title, year);
-          const found: CachedMatch = best
-            ? { tmdbID: best.item.tmdbID, kind, title: best.item.title, year: best.item.year, posterPath: best.item.posterPath, backdropPath: best.item.backdropPath }
-            : null;
+        lookup = this.lookUp(kind, parsed, search, seasonCount).then((found) => {
           this.matches[key] = found;
           return found;
         }, () => undefined); // Try again next refresh.
@@ -357,6 +399,96 @@ export class LibraryIndex {
       cached = looked;
     }
     return cached ? { ...cached, season: parsed.season, episode: parsed.episode } : undefined;
+  }
+
+  /** Movies are searched with their year; shows without it, then picked with it (pickShow). */
+  private async lookUp(kind: MediaKind, parsed: { title: string; year?: number; season?: number }, search: Searcher, seasonCount?: SeasonCounter): Promise<CachedMatch> {
+    const year = kind === "movie" ? parsed.year : undefined;
+    const searchKey = `${kind}|${normalizeTitle(parsed.title)}|${year ?? ""}`;
+    let results = this.searches.get(searchKey);
+    if (!results) {
+      results = search(kind, parsed.title, year);
+      this.searches.set(searchKey, results);
+      results.catch(() => this.searches.delete(searchKey));
+    }
+    const items = await results;
+    const best = kind === "tv"
+      ? await pickShow(items, parsed.title, parsed.year, parsed.season ?? 1, (id) => this.seasonCount(id, seasonCount))
+      : pickMatch(items, parsed.title, year);
+    if (!best) return null;
+    const { tmdbID, title, year: itemYear, posterPath, backdropPath } = best.item;
+    return { tmdbID, kind, title, year: itemYear, posterPath, backdropPath, confidence: best.confidence };
+  }
+
+  private seasonCount(tmdbID: number, lookUp?: SeasonCounter): Promise<number | undefined> {
+    if (!lookUp) return Promise.resolve(undefined);
+    let count = this.seasonCounts.get(tmdbID);
+    if (!count) {
+      count = lookUp(tmdbID).catch(() => {
+        this.seasonCounts.delete(tmdbID);
+        return undefined;
+      });
+      this.seasonCounts.set(tmdbID, count);
+    }
+    return count;
+  }
+
+  // MARK: Fix Match
+
+  private chainOf(parentID: number | undefined): number[] {
+    return folderChain(parentID, this.snapshot.folders ?? {});
+  }
+
+  /** The Fix Match choice behind a file's match, if any. */
+  overrideOf(file: { id: number; name: string; parentID?: number }): MatchOverride | undefined {
+    return overrideFor(this.overrides, file, this.chainOf(file.parentID));
+  }
+
+  /** Whether Match Automatically has anything to undo for these files (or this folder). */
+  hasOverride(files: { id: number; name: string; parentID?: number }[], folderID?: number): boolean {
+    return (folderID !== undefined && Boolean(this.overrides.folders[folderID])) || files.some((f) => this.overrideOf(f));
+  }
+
+  private withOverrides(entries: LibraryEntry[], folders = this.snapshot.folders ?? {}): LibraryEntry[] {
+    return entries.map((e) => {
+      const chosen = overrideFor(this.overrides, e, folderChain(e.parentID, folders));
+      return chosen ? { ...e, match: applyOverride(chosen, e.name, e.folderName, e.grandparentName) } : e;
+    });
+  }
+
+  private saveEntries(entries: LibraryEntry[]) {
+    this.snapshot = { ...this.snapshot, entries };
+    writeJSON(keys.library, this.snapshot);
+    this.emit();
+  }
+
+  /** Saves the choice for `target` and shows it at once on every library file it covers. */
+  fixMatch(target: FixMatchTarget, chosen: MatchOverride) {
+    this.overrides = withOverride(this.overrides, target, chosen);
+    writeJSON(keys.matchOverrides, this.overrides);
+    this.saveEntries(this.withOverrides(this.entries));
+  }
+
+  /** Match Automatically: forgets every choice covering these files (their own, any folder above them, their name)
+   * and the folder's own, then matches every library file that lost its choice like a new one (its old automatic
+   * verdict is what Fix Match was correcting). Returns how many files went back to automatic matching. */
+  async matchAutomatically(files: { id: number; name: string; parentID?: number }[], folderID: number | undefined, search: Searcher, seasonCount?: SeasonCounter): Promise<number> {
+    const before = this.entries.filter((e) => this.overrideOf(e));
+    this.overrides = withoutOverrides(this.overrides, files.map((f) => ({ ...f, chain: this.chainOf(f.parentID) })), folderID);
+    writeJSON(keys.matchOverrides, this.overrides);
+    const released = new Set(before.filter((e) => !this.overrideOf(e)).map((e) => e.id));
+    for (const e of this.entries) {
+      if (released.has(e.id)) delete this.matches[matchKey(describeVideo(e.name, e.folderName, e.grandparentName))];
+    }
+    this.lookups.clear();
+    this.searches.clear();
+    const entries = await Promise.all(this.entries.map(async (e) => (released.has(e.id)
+      ? { ...e, match: await this.match(e.name, e.folderName, e.grandparentName, search, seasonCount) }
+      : e)));
+    writeJSON(keys.matches, this.matches);
+    // Changes made meanwhile (another Fix Match) still win.
+    this.saveEntries(this.withOverrides(entries));
+    return released.size;
   }
 }
 

@@ -6,6 +6,7 @@ import { playPath } from "../components/Cards";
 import { ConfirmDialog, NameDialog } from "../components/files/Dialog";
 import { fileDetail, idsToForget, isFileSort, itemsLabel, sortFiles, summary, fileSorts, type FileSort } from "../components/files/fileLogic";
 import { FolderPicker, type PickRequest } from "../components/files/FolderPicker";
+import { FixMatchDialog } from "../components/FixMatch";
 import { CopyIcon, DownloadIcon, FileIcon, FolderPlusIcon, MoveIcon, OpenIcon, PencilIcon, SortIcon } from "../components/files/icons";
 import { Menu, placeAtPointer, placeUnder, type MenuItem, type MenuPlace } from "../components/files/Menu";
 import { openOriginal, SelectionBar, StorageMeter, TrashLink } from "../components/files/parts";
@@ -13,6 +14,7 @@ import { ChevronRight, CloseIcon, FilmIcon, FolderIcon, MoreIcon, PlayIcon, Sear
 import { TopBar } from "../components/TopBar";
 import { clock } from "../lib/format";
 import { library } from "../lib/library";
+import { folderRequest, videoRequest, type FixMatchRequest } from "../lib/matchOverrides";
 import { readString, writeString } from "../lib/storage";
 import { refreshLibrary, useToast } from "../state/hooks";
 import { usePutio } from "../state/session";
@@ -25,7 +27,8 @@ type Dialogs =
   | { kind: "rename"; file: PutioFile }
   | { kind: "new-folder" }
   | { kind: "delete"; files: PutioFile[] }
-  | { kind: "pick"; request: PickRequest };
+  | { kind: "pick"; request: PickRequest }
+  | { kind: "fix-match"; request: FixMatchRequest };
 
 /** Your whole put.io, like the iPhone app's Files: folders open, videos play, other files download, and anything can
  * be renamed, moved, copied or deleted (to put.io's Trash), one at a time or as a selection. */
@@ -192,6 +195,13 @@ function Folder({ parent }: { parent: number }) {
     if (isFolder(file)) items.push({ label: "Open", icon: <FolderIcon size={16} />, onSelect: () => navigate(`/files/${file.id}`) });
     if (isVideo(file)) items.push({ label: "Play", icon: <PlayIcon size={14} />, onSelect: () => navigate(playPath(file.id)) });
     if (!isFolder(file)) items.push({ label: isVideo(file) ? "Download Original" : "Download", icon: <DownloadIcon size={16} />, onSelect: () => download(file) });
+    // Fix Match: a video alone (or its folder, or every file named like it), or everything in a folder.
+    if (isVideo(file) || isFolder(file)) {
+      const request = isFolder(file)
+        ? folderRequest(file)
+        : videoRequest({ id: file.id, name: file.name, parentID: file.parent_id ?? parent }, (file.parent_id ?? parent) === parent && parent !== 0 ? name : undefined);
+      items.push({ label: "Fix Match…", icon: <FilmIcon size={16} />, onSelect: () => setDialog({ kind: "fix-match", request }) });
+    }
     items.push(
       { label: "Rename…", icon: <PencilIcon size={16} />, onSelect: () => setDialog({ kind: "rename", file }) },
       { label: "Move to…", icon: <MoveIcon size={16} />, onSelect: () => pick("move", [file]) },
@@ -315,6 +325,7 @@ function Folder({ parent }: { parent: number }) {
             ? "It stays in put.io's Trash until the trash is emptied, so you can still restore it."
             : "They stay in put.io's Trash until the trash is emptied, so you can still restore them."} />
       )}
+      {dialog?.kind === "fix-match" && <FixMatchDialog request={dialog.request} onClose={() => setDialog(null)} />}
       {dialog?.kind === "pick" && (
         <FolderPicker putio={putio} request={dialog.request} busy={busy} onClose={() => setDialog(null)}
           onPick={(folder) => transfer(dialog.request, folder)} />
