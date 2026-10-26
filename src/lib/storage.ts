@@ -42,6 +42,8 @@ export const keys = {
   matchOverrides: "pc.matchOverrides.v1",
   durations: "pc.durations.v1",
   positions: "pc.positions.v1",
+  /** When each file was watched (lib/watched.ts). */
+  watched: "pc.watched.v1",
   settings: "pc.settings.v1",
   myList: "pc.mylist.v1",
   recentSearches: "pc.search.recent.v1",

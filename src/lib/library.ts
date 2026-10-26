@@ -9,6 +9,7 @@ import { normalizeTitle, pickMatch, pickShow } from "./matcher";
 import { deviceSave, mergePosition, putioRead, samePosition, type Position } from "./positions";
 import { parseReleaseName } from "./releaseName";
 import { keys, readJSON, writeJSON } from "./storage";
+import { markAfter, STARTED_SECONDS } from "./watched";
 
 export interface LibraryMatch {
   tmdbID: number;
@@ -47,6 +48,12 @@ interface Snapshot {
   /** Folder id → the folder it's in, for the folders the walk read (Fix Match by folder). */
   folders?: Record<string, number>;
 }
+
+/** A Continue Watching card before Up Next is worked out: a video to resume, or a show whose latest episode was
+ * finished (its next one comes up). `at`: when it was last watched (-1 when unknown). */
+export type ContinueItem =
+  | { kind: "resume"; entry: LibraryEntry; at: number }
+  | { kind: "upNext"; finished: LibraryEntry; at: number };
 
 type CachedMatch = Omit<LibraryMatch, "season" | "episode"> | null;
 type SearchResult = { tmdbID: number; title: string; year?: number; posterPath?: string | null; backdropPath?: string | null };
@@ -110,6 +117,8 @@ export class LibraryIndex {
   private overrides = readJSON<MatchOverrides>(keys.matchOverrides, noOverrides());
   private durations = readJSON<Record<string, number>>(keys.durations, {});
   private positions = this.loadPositions();
+  /** File id → when it was watched (lib/watched.ts); this account's, like the positions. */
+  private watched = readJSON<Record<number, number>>(keys.watched, {});
   private lookups = new Map<string, Promise<CachedMatch | undefined>>();
   /** TMDB searches of this update: every episode of a show asks the same one. */
   private searches = new Map<string, Promise<SearchResult[]>>();
@@ -149,22 +158,41 @@ export class LibraryIndex {
       && (episode === undefined || e.match.episode === episode));
   }
 
-  /** Started videos, last watched (anywhere) first; when that's unknown, by put.io's last change. */
-  private started(): LibraryEntry[] {
-    const watched = (e: LibraryEntry) => this.positions[e.id]?.watchedAt ?? -1;
-    return this.entries.filter((e) => this.resumeSeconds(e) >= 30)
-      .sort((a, b) => watched(b) - watched(a) || (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+  isWatched(fileID: number): boolean { return this.watched[fileID] !== undefined; }
+
+  /** When it was watched (ms), if it is. */
+  watchedAt(fileID: number): number | undefined { return this.watched[fileID]; }
+
+  /** Started and watched videos, last watched (anywhere) first; when that's unknown, by put.io's last change. */
+  private activity(): ContinueItem[] {
+    const items = this.entries.flatMap((e): ContinueItem[] => {
+      const mark = this.watched[e.id];
+      if (mark !== undefined) return [{ kind: "upNext", finished: e, at: mark }];
+      return this.resumeSeconds(e) >= STARTED_SECONDS ? [{ kind: "resume", entry: e, at: this.positions[e.id]?.watchedAt ?? -1 }] : [];
+    });
+    const file = (i: ContinueItem) => (i.kind === "resume" ? i.entry : i.finished);
+    return items.sort((a, b) => b.at - a.at || (file(b).updatedAt ?? "").localeCompare(file(a).updatedAt ?? ""));
   }
 
-  /** Started videos, latest first, one per show (its latest started episode). */
-  continueWatching(): LibraryEntry[] {
+  /** Continue Watching, latest first, one card per movie or show. A show's card is its latest activity: an episode
+   * to resume, or the one after an episode just finished (worked out with TMDB: upNext.ts). A finished movie, file
+   * or special leaves. */
+  continueWatchingItems(): ContinueItem[] {
     const seen = new Set<string>();
-    return this.started().filter((e) => {
-      const key = e.match?.kind === "tv" ? `tv-${e.match.tmdbID}` : `f-${e.id}`;
+    return this.activity().filter((item) => {
+      const e = item.kind === "resume" ? item.entry : item.finished;
+      const m = e.match;
+      if (item.kind === "upNext" && !(m?.kind === "tv" && m.season !== undefined && m.season > 0 && m.episode !== undefined)) return false;
+      const key = m?.kind === "tv" ? `tv-${m.tmdbID}` : `f-${e.id}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
+  }
+
+  /** The videos to resume in Continue Watching (shows whose latest episode was finished are left out). */
+  continueWatching(): LibraryEntry[] {
+    return this.continueWatchingItems().flatMap((i) => (i.kind === "resume" ? [i.entry] : []));
   }
 
   /** Newest first; a show appears once. */
@@ -180,9 +208,11 @@ export class LibraryIndex {
       .slice(0, limit);
   }
 
-  /** How much is watched (0…1): the length the player saw, else `estimatedSeconds` (TMDB's runtime). */
+  /** How much is watched (0…1): the length the player saw, else `estimatedSeconds` (TMDB's runtime). A watched
+   * video is all of it. */
   watchedFraction(entry: LibraryEntry, estimatedSeconds?: number): number | undefined {
     const position = this.resumeSeconds(entry);
+    if (this.isWatched(entry.id) && position < STARTED_SECONDS) return 1;
     const length = this.durations[entry.id] ?? estimatedSeconds;
     if (position < 30 || !length) return undefined;
     return Math.min(1, position / length);
@@ -195,13 +225,13 @@ export class LibraryIndex {
     return length - position;
   }
 
-  /** Whose positions to read from put.io when the app comes to the front: the started ones (last watched first),
-   * then the latest changed videos, where another device may have started something new. Started ones leave room
-   * for at least 10 of those, as in the native apps. */
+  /** Whose positions to read from put.io when the app comes to the front: the started and watched ones (last
+   * watched first: a rewatch elsewhere brings one back), then the latest changed videos, where another device may
+   * have started something new. Those first leave room for at least 10 of these, as in the native apps. */
   positionCandidates(limit = 30): number[] {
-    const started = this.started().slice(0, Math.max(0, limit - 10));
+    const active = this.activity().slice(0, Math.max(0, limit - 10)).map((i) => (i.kind === "resume" ? i.entry : i.finished));
     const changed = [...this.entries].sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
-    return [...new Set([...started, ...changed].map((e) => e.id))].slice(0, limit);
+    return [...new Set([...active, ...changed].map((e) => e.id))].slice(0, limit);
   }
 
   /** Files saved here that put.io doesn't have yet. */
@@ -211,17 +241,31 @@ export class LibraryIndex {
 
   // MARK: Writing
 
-  /** The player's position (0 when watched to the end): newest, so it wins, and pending until put.io has it. */
+  /** The player's position: newest, so it wins, and pending until put.io has it. A started one takes away a
+   * watched mark (a rewatch). */
   noteProgress(fileID: number, seconds: number, duration?: number): Position {
+    this.noteDuration(fileID, duration);
+    return this.takePosition(fileID, deviceSave(Math.floor(seconds), Date.now()));
+  }
+
+  /** Watched to the end (or the next episode was played): marked watched now, and put.io's position reset. */
+  noteWatched(fileID: number, duration?: number): Position {
+    this.noteDuration(fileID, duration);
+    const at = Date.now();
+    const position = this.takePosition(fileID, deviceSave(0, at));
+    this.setMark(fileID, at);
+    return position;
+  }
+
+  private noteDuration(fileID: number, duration?: number) {
     if (duration && Number.isFinite(duration) && duration > 0 && this.durations[fileID] !== Math.floor(duration)) {
       this.durations[fileID] = Math.floor(duration);
       writeJSON(keys.durations, this.durations);
     }
-    return this.takePosition(fileID, deviceSave(Math.floor(seconds), Date.now()));
   }
 
   /** put.io's position from a read that started at `readAt`. A changed value means it was watched since; 0 is kept
-   * too (finished elsewhere: out of Continue Watching). */
+   * too (finished elsewhere: watched, out of Continue Watching). */
   notePutioPosition(fileID: number, seconds: number, readAt: number): Position {
     return this.takePosition(fileID, putioRead(Math.floor(seconds), readAt, seconds > 0 ? readAt : undefined));
   }
@@ -233,9 +277,20 @@ export class LibraryIndex {
   }
 
   private takePosition(fileID: number, incoming: Position): Position {
-    const next = mergePosition(this.positions[fileID], incoming);
-    if (!samePosition(this.positions[fileID], next)) this.setPosition(fileID, next);
+    const previous = this.positions[fileID];
+    const next = mergePosition(previous, incoming);
+    if (!samePosition(previous, next)) this.setPosition(fileID, next);
+    this.setMark(fileID, markAfter(this.watched[fileID], previous, next, incoming));
     return next;
+  }
+
+  private setMark(fileID: number, mark: number | undefined) {
+    if (this.watched[fileID] === mark) return;
+    const marks = { ...this.watched };
+    if (mark === undefined) delete marks[fileID]; else marks[fileID] = mark;
+    this.watched = marks;
+    writeJSON(keys.watched, this.watched);
+    this.emit();
   }
 
   private setPosition(fileID: number, position: Position) {
@@ -262,10 +317,12 @@ export class LibraryIndex {
   clear() {
     this.snapshot = { entries: [], updatedAt: 0 };
     this.positions = {};
+    this.watched = {};
     // Fix Match choices name this account's files and folders.
     this.overrides = noOverrides();
     writeJSON(keys.library, this.snapshot);
     writeJSON(keys.positions, this.positions);
+    writeJSON(keys.watched, this.watched);
     writeJSON(keys.matchOverrides, this.overrides);
     this.emit();
   }
@@ -329,13 +386,21 @@ export class LibraryIndex {
    * value never removes one. Positions are never dropped by a refresh, except old ones of files that are gone. */
   private notePositionsFromList(entries: LibraryEntry[], startedAt: number, refreshedBefore: boolean) {
     const next: Record<number, Position> = { ...this.positions };
+    const marks = { ...this.watched };
     for (const e of entries) {
-      if (e.startFrom > 0) next[e.id] = mergePosition(next[e.id], putioRead(e.startFrom, startedAt, refreshedBefore ? startedAt : undefined));
+      if (e.startFrom <= 0) continue;
+      const incoming = putioRead(e.startFrom, startedAt, refreshedBefore ? startedAt : undefined);
+      const merged = mergePosition(next[e.id], incoming);
+      const mark = markAfter(marks[e.id], next[e.id], merged, incoming);
+      if (mark === undefined) delete marks[e.id]; else marks[e.id] = mark;
+      next[e.id] = merged;
     }
     const present = new Set(entries.map((e) => e.id));
     const cutoff = Date.now() - KEEP_GONE_POSITIONS_MS;
     this.positions = Object.fromEntries(Object.entries(next).filter(([id, p]) => present.has(Number(id)) || p.pending || p.at >= cutoff));
+    this.watched = Object.fromEntries(Object.entries(marks).filter(([id, at]) => present.has(Number(id)) || at >= cutoff));
     writeJSON(keys.positions, this.positions);
+    writeJSON(keys.watched, this.watched);
   }
 
   /** Breadth-first through what `scope` covers: the top of put.io (its loose videos and in-scope folders), everything

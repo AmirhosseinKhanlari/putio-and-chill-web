@@ -2,6 +2,7 @@
  * when put.io can't be reached), and positions from other devices are read when the app comes to the front. */
 import { PutioError, type PutioClient } from "../api/putio";
 import { library, type LibraryIndex } from "./library";
+import { reachedWatched } from "./watched";
 
 type StartFromClient = Pick<PutioClient, "getStartFrom" | "setStartFrom" | "resetStartFrom">;
 
@@ -11,8 +12,6 @@ const CHECK_TIMEOUT_MS = 4000;
 const CHECK_PARALLEL = 6;
 /** The player's own read waits less: playback shouldn't hang on put.io. */
 export const PLAYER_TIMEOUT_MS = 2000;
-/** Watched this far counts as finished: put.io forgets the position. */
-const FINISHED = 0.95;
 
 /** `run` gets a signal that aborts when `ms` passes; the promise then rejects. */
 function withTimeout<T>(ms: number, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
@@ -31,10 +30,17 @@ export class PositionSync {
 
   constructor(private readonly lib: LibraryIndex, private readonly retryDelayMs = 1000) {}
 
-  /** The player's position: kept here at once, then sent with anything else still waiting. */
+  /** The player's position: kept here at once, then sent with anything else still waiting. Far enough in
+   * (lib/watched.ts) it's watched: put.io forgets the position. */
   save(putio: StartFromClient, fileID: number, position: number, duration?: number): Promise<void> {
-    const finished = duration !== undefined && duration > 0 && position >= duration * FINISHED;
-    this.lib.noteProgress(fileID, finished ? 0 : position, duration);
+    if (reachedWatched(position, duration)) return this.finish(putio, fileID, duration);
+    this.lib.noteProgress(fileID, position, duration);
+    return this.sendPending(putio);
+  }
+
+  /** Watched: the end was reached, or the next episode was played. */
+  finish(putio: StartFromClient, fileID: number, duration?: number): Promise<void> {
+    this.lib.noteWatched(fileID, duration);
     return this.sendPending(putio);
   }
 

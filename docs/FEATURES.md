@@ -33,7 +33,10 @@ lists what the web version leaves out.
 
 - **Featured slider**: trending titles with full-bleed art, year, rating and actions; advances every nine seconds.
 - **Surprise me** card right under it.
-- **Continue Watching**: one card per movie or show, with the time left, from put.io's own watch positions.
+- **Continue Watching**: one card per movie or show, with the time left, from put.io's own watch positions. A video
+  watched to 95% (or to the credits, if they start first) counts as watched and leaves the row; for a show, its next
+  aired episode comes up instead as **Up Next · S2 E5**, played from the start, or opening the show on that episode
+  when it isn't in put.io yet. Watched episodes and movies are marked ✓ Watched on the title page and in Library.
 - **My List**: save anything with ＋; See All page.
 - **Recently Added to put.io**, on Home and per kind on Movies and TV.
 - **Trending Now**, **Popular Movies**, **Popular TV**, and **Because you watched …**: recommendations from the last

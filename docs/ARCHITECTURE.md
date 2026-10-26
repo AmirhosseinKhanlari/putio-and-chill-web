@@ -56,6 +56,7 @@ same-origin proxy for the few services that don't allow that.
 | `releaseName.ts` | Title, year, season/episode, resolution, codec and source from release and file names |
 | `matcher.ts` | Matches a parsed name to TMDB search results with a confidence score |
 | `library.ts`, `libraryScope.ts` | The library index: which put.io folders count, walking them, matching each video once, watch positions and durations, Continue Watching |
+| `watched.ts`, `upNext.ts` | When a video counts as watched (95% or the credits) and how positions move the watched mark; the episode after a finished one, for Up Next |
 | `positions.ts`, `positionSync.ts` | Watch positions: one record per file merged so the newest wins (the native apps' rules), saves that wait until put.io has them, and the check for other devices' positions when the app comes to the front |
 | `smartGet.ts` | The Get & Watch rule: which release to send |
 | `folders.ts` | put.io folder layout (`Movies`, `TV Series/<Show>/Season N`), finding or creating folders |
@@ -68,6 +69,7 @@ same-origin proxy for the few services that don't allow that.
 
 - `session.tsx`: put.io and chill.institute tokens, sign in and out. A put.io 401 anywhere signs the visitor out.
 - `hooks.tsx`: account, library, transfers, My List, toasts, and the old-folder merge.
+- `continueWatching.ts`: Continue Watching's cards, with Up Next worked out from TMDB's seasons.
 - `oldFolderMerge.ts`: runs the merge once per put.io account, remembering where it stopped.
 
 ### Pages and components
@@ -128,7 +130,7 @@ name and base address to `proxyTargets` (and any headers it needs).
 
 | Data | Stored | Refreshed |
 |---|---|---|
-| put.io library, matches, durations, watch positions | localStorage (`pc.library.v1`, `pc.matches.v1`, `pc.durations.v1`, `pc.positions.v1`) | At load if older than the Settings interval (default 1 h); Update Now; when a transfer finishes |
+| put.io library, matches, durations, watch positions, watched marks | localStorage (`pc.library.v1`, `pc.matches.v1`, `pc.durations.v1`, `pc.positions.v1`, `pc.watched.v1`) | At load if older than the Settings interval (default 1 h); Update Now; when a transfer finishes |
 | Settings, My List, recent searches, sign-ins | localStorage (`pc.settings.v1`, `pc.mylist.v1`, …) | On change |
 | TMDB rows, charts, Coming Up, Latest | TanStack Query (memory) | Per query `staleTime`: trending and lists a day, recommendations an hour, account 30 s |
 | Transfers | Query, polled | Every 5 seconds while Library is open |

@@ -60,6 +60,8 @@ function PlayerScreen({ id }: { id: number }) {
   const bottomBar = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls>();
   const lastSaved = useRef(0);
+  /** Marked watched on the way to the next episode: the save as this player closes mustn't undo it. */
+  const finished = useRef(false);
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -166,11 +168,18 @@ function PlayerScreen({ id }: { id: number }) {
 
   // Saving the position to put.io (and how long the video is, for the watched bars).
   const save = useCallback((force = false, el: HTMLVideoElement | null = video.current) => {
-    if (!el || !el.duration || !Number.isFinite(el.duration)) return;
+    if (finished.current || !el || !el.duration || !Number.isFinite(el.duration)) return;
     const position = Math.floor(el.currentTime);
     if (!force && Math.abs(position - lastSaved.current) < SAVE_EVERY) return;
     lastSaved.current = position;
     void positionSync.save(putio, id, position, el.duration);
+  }, [id, putio]);
+
+  // Watched: the end was reached, or the next episode was played (by the button or the countdown).
+  const finish = useCallback((el: HTMLVideoElement | null = video.current) => {
+    const length = el?.duration && Number.isFinite(el.duration) ? el.duration : undefined;
+    if (el) lastSaved.current = Math.floor(el.currentTime);
+    void positionSync.finish(putio, id, length);
   }, [id, putio]);
 
   useEffect(() => {
@@ -306,9 +315,10 @@ function PlayerScreen({ id }: { id: number }) {
   }, [navigate, item, save]);
   const playNext = useCallback(() => {
     if (!next) return;
-    save(true);
+    finish();
+    finished.current = true;
     navigate(playPath(next.id), { replace: true });
-  }, [next, save, navigate]);
+  }, [next, finish, navigate]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -359,7 +369,7 @@ function PlayerScreen({ id }: { id: number }) {
         onProgress={(e) => { const b = e.currentTarget.buffered; if (b.length) setBuffered(b.end(b.length - 1)); }}
         onRateChange={(e) => setRate(e.currentTarget.playbackRate)}
         onSeeking={(e) => { if (e.currentTarget.duration - e.currentTarget.currentTime > 1.5) setEnded(false); }}
-        onEnded={() => { setEnded(true); setChrome(true); save(true); }}
+        onEnded={(e) => { setEnded(true); setChrome(true); finish(e.currentTarget); }}
       >
         {subs.trackURL && <track key={subs.trackURL} ref={trackRef} kind="subtitles" src={subs.trackURL} label="Subtitles" />}
       </video>

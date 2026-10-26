@@ -1,11 +1,8 @@
 /** Next Episode timing, as in the iPhone app's NextUp.swift. */
+import { creditsLength } from "../../lib/watched";
 
-/** Seconds before the end at which the credits are assumed to start: 2.5% of the running time, 20–60 s
- * (about 33 s for a half-hour show, a minute for an hour-long one). */
-export function creditsLength(duration: number): number {
-  if (!Number.isFinite(duration) || duration <= 0) return 0;
-  return Math.min(60, Math.max(20, duration * 0.025));
-}
+// Where the credits start is also where a video can count as watched (lib/watched.ts).
+export { creditsLength };
 
 /** How long the Next Episode button counts down before playing by itself. */
 export const COUNTDOWN_SECONDS = 8;

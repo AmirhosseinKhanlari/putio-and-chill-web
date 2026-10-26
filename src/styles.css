@@ -144,6 +144,7 @@ h2 { font-size: 21px; font-weight: 600; }
 .card-link { text-decoration: none; display: block; }
 .card:hover .poster, .card-link:hover .poster { transform: scale(1.03); }
 .card-caption { font-size: 13px; color: rgba(255, 255, 255, 0.78); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.card-caption-sub { margin-top: -6px; color: var(--muted); }
 .quiet-link { text-decoration: none; }
 .quiet-link:hover { text-decoration: underline; }
 .poster { position: relative; aspect-ratio: 2 / 3; border-radius: var(--radius); background: #1d2430; border: 1px solid rgba(255, 255, 255, 0.08); overflow: hidden; transition: transform 0.18s ease; }

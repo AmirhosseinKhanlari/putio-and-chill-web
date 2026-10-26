@@ -320,6 +320,125 @@ describe("watch positions across devices", () => {
     expect(putio.calls).toEqual([]);
   });
 
+  const items = (index: LibraryIndex) => index.continueWatchingItems().map((i) => (i.kind === "resume" ? `resume ${i.entry.id}` : `next after ${i.finished.id}`));
+
+  it("marks a video watched at its threshold, resets put.io, and puts the show's next episode up instead", async () => {
+    cachedLibrary();
+    const index = new LibraryIndex();
+    const putio = fakePutio({ 2: 1250 });
+    const sync = new PositionSync(index, 0);
+    await sync.save(putio, 2, 3134, 3300); // Just short of 95% (3135).
+    expect(index.isWatched(2)).toBe(false);
+    at(10);
+    await sync.save(putio, 2, 3135, 3300);
+    expect(index.watchedAt(2)).toBe(T + 10_000);
+    expect(putio.calls).toEqual(["set 2 3134", "reset 2"]);
+    expect(items(index)).toEqual(["next after 2"]);
+    expect(index.continueWatching()).toEqual([]);
+    expect(index.watchedFraction(index.entries.find((e) => e.id === 2)!)).toBe(1);
+    // Kept after a reload; another account never sees it.
+    expect(new LibraryIndex().isWatched(2)).toBe(true);
+    index.clear();
+    expect(new LibraryIndex().isWatched(2)).toBe(false);
+  });
+
+  it("marks it watched when the next episode is played, wherever the position was", async () => {
+    cachedLibrary();
+    const index = new LibraryIndex();
+    const putio = fakePutio({ 2: 0 });
+    await new PositionSync(index, 0).finish(putio, 2, 3300);
+    expect(index.isWatched(2)).toBe(true);
+    expect(putio.calls).toEqual(["reset 2"]);
+  });
+
+  it("a rewatch here (a started position saved later) takes the mark away", async () => {
+    cachedLibrary();
+    const index = new LibraryIndex();
+    const putio = fakePutio({ 2: 0 });
+    const sync = new PositionSync(index, 0);
+    await sync.finish(putio, 2, 3300);
+    at(10);
+    await sync.save(putio, 2, 12, 3300); // Opened again, a few seconds in: still watched.
+    expect(index.isWatched(2)).toBe(true);
+    at(20);
+    await sync.save(putio, 2, 600, 3300);
+    expect(index.isWatched(2)).toBe(false);
+    expect(items(index)).toEqual(["resume 2"]);
+  });
+
+  it("put.io's 0 after the mark keeps it watched; a later position from put.io brings it back as a resume", async () => {
+    cachedLibrary();
+    const index = new LibraryIndex();
+    const putio = fakePutio({ 2: 1250 });
+    const sync = new PositionSync(index, 0);
+    at(10);
+    await sync.finish(putio, 2, 3300);
+    index.notePutioPosition(2, 1250, T + 5_000); // A read that began before the mark.
+    expect(index.isWatched(2)).toBe(true);
+    at(40);
+    await sync.check(putio);
+    expect(putio.positions[2]).toBe(0);
+    expect(index.isWatched(2)).toBe(true);
+    putio.positions[2] = 900; // Rewatched on another device.
+    at(80);
+    await sync.check(putio);
+    expect(index.isWatched(2)).toBe(false);
+    expect(resume(index, 2)).toBe(900);
+    expect(items(index)).toEqual(["resume 2"]);
+  });
+
+  it("put.io's 0 replacing a started position means it was finished elsewhere: watched at the read", async () => {
+    cachedLibrary();
+    const index = new LibraryIndex();
+    const sync = new PositionSync(index, 0);
+    const putio = fakePutio({ 2: 1250, 3: 0 });
+    await sync.check(putio);
+    putio.positions[2] = 0;
+    at(31);
+    await sync.check(putio);
+    expect(index.watchedAt(2)).toBe(T + 31_000);
+    expect(index.isWatched(3)).toBe(false); // Never started: 0 says nothing.
+  });
+
+  it("orders resume and Up Next cards by when they were watched, one per show, by its latest activity", async () => {
+    cachedLibrary();
+    const index = new LibraryIndex();
+    const sync = new PositionSync(index, 0);
+    const putio = fakePutio({ 1: 0, 2: 0, 3: 0 });
+    await sync.save(putio, 3, 400, 3300); // E5 started…
+    at(10);
+    await sync.finish(putio, 2, 3300); // …then E4 finished: Up Next replaces E5's card.
+    expect(items(index)).toEqual(["next after 2"]);
+    at(20);
+    await sync.save(putio, 1, 900, 6000);
+    expect(items(index)).toEqual(["resume 1", "next after 2"]);
+    at(30);
+    await sync.save(putio, 3, 500, 3300); // Back to E5: its resume card is the show's again.
+    expect(items(index)).toEqual(["resume 3", "resume 1"]);
+    at(40);
+    await sync.finish(putio, 1, 6000); // A finished movie leaves.
+    expect(items(index)).toEqual(["resume 3"]);
+  });
+
+  it("a finished special doesn't make an Up Next card; the show's last regular episode does", async () => {
+    const special: LibraryEntry = { ...ep4, id: 9, match: { ...ep4.match!, season: 0, episode: 1 } };
+    cachedLibrary([heat, ep4, special]);
+    const index = new LibraryIndex();
+    const sync = new PositionSync(index, 0);
+    const putio = fakePutio({});
+    await sync.finish(putio, 2, 3300);
+    at(10);
+    await sync.finish(putio, 9, 3300);
+    expect(items(index)).toEqual(["next after 2"]);
+  });
+
+  it("reads put.io's positions of watched videos too (a rewatch elsewhere)", async () => {
+    cachedLibrary();
+    const index = new LibraryIndex();
+    await new PositionSync(index, 0).finish(fakePutio({}), 1, 6000);
+    expect(index.positionCandidates(11)[0]).toBe(1);
+  });
+
   it("brings over positions an older build kept in the library cache", () => {
     localStorage.setItem("pc.library.v1", JSON.stringify({ entries: [heat], updatedAt: T - 1000, progress: { 1: 640 } }));
     expect(new LibraryIndex().position(1)).toEqual({ seconds: 640, at: T - 1000, source: "device", pending: false });

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { image } from "../api/tmdb";
 import type { PutioTransfer } from "../api/putio";
-import { EntryCard, playPath, Poster, titlePath } from "../components/Cards";
+import { EntryCard, playPath, Poster, titlePath, WatchedChip } from "../components/Cards";
 import { Menu, placeUnder, type MenuPlace } from "../components/files/Menu";
 import { FixMatchDialog } from "../components/FixMatch";
 import { CloseIcon, FolderIcon, MoreIcon, PlayIcon, RefreshIcon } from "../components/Icons";
@@ -91,10 +91,12 @@ export function Library() {
               );
               if (first.match?.kind === "tv") {
                 const item = { tmdbID: first.match.tmdbID, kind: "tv" as const, title: first.match.title };
+                // Every episode in put.io watched.
+                const allWatched = g.every((e) => lib.isWatched(e.id) && lib.resumeSeconds(e) < 30);
                 return (
                   <div key={`tv-${first.match.tmdbID}`} className="library-card">
                     <Link to={titlePath(item)} className="card">
-                      <Poster path={first.match.posterPath} title={first.match.title}><span className="count-badge">{g.length}</span></Poster>
+                      <Poster path={first.match.posterPath} title={first.match.title}><span className="count-badge">{g.length}</span>{allWatched && <WatchedChip />}</Poster>
                       <span className="card-caption">{first.match.title} · {g.length} episode{g.length === 1 ? "" : "s"}</span>
                     </Link>
                     {more}

@@ -1,13 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { image, tmdb, type Episode, type MediaKind, type TitleDetail } from "../api/tmdb";
-import { playPath, WatchedBar } from "../components/Cards";
+import { playPath, WatchedBar, WatchedChip } from "../components/Cards";
 import { useGetAndWatch, VersionsDialog, type GetTarget } from "../components/GetAndWatch";
 import { CheckIcon, CloudDown, InfoIcon, LayersIcon, MoreIcon, PlayIcon, PlusIcon, TrailerIcon } from "../components/Icons";
 import { TopBar } from "../components/TopBar";
 import { left as leftLabel, runtime } from "../lib/format";
 import type { LibraryEntry } from "../lib/library";
+import { useContinueWatching } from "../state/continueWatching";
 import { useLibrary, useMyList } from "../state/hooks";
 import { CatalogShelf } from "./Home";
 // Cast & Crew links share the person page's styles.
@@ -34,11 +35,17 @@ function TitleView({ detail }: { detail: TitleDetail }) {
   const [versions, setVersions] = useState<GetTarget | null>(null);
   const [trailer, setTrailer] = useState(false);
   const files = lib.matching(item.tmdbID).filter((e) => e.match?.kind === item.kind);
-  const started = lib.continueWatching().find((e) => e.match?.tmdbID === item.tmdbID && e.match.kind === item.kind);
+  // Continue Watching's card for this title: an episode to resume, or (a finished one's) next episode.
+  const card = useContinueWatching().find((c) => (c.kind === "resume" ? c.entry.match : c.show)?.tmdbID === item.tmdbID
+    && (c.kind === "resume" ? c.entry.match?.kind : c.show.kind) === item.kind);
+  const started = card?.kind === "resume" ? card.entry : undefined;
+  const upNext = card?.kind === "upNext" ? card.next : undefined;
   const firstFile = [...files].sort(byEpisode)[0];
-  const playable = started ?? firstFile;
+  const playable = started ?? upNext?.entry ?? firstFile;
   const remaining = playable ? lib.remainingSeconds(playable, (detail.runtimeMinutes ?? 0) * 60 || undefined) : undefined;
   const code = playable?.match?.season !== undefined ? `S${playable.match.season} E${playable.match.episode ?? ""}` : "";
+  const playLabel = started ? ["Resume", code, remaining !== undefined ? leftLabel(remaining) : ""].filter(Boolean).join(" · ").replace("Resume · ", "Resume ")
+    : upNext?.entry ? `Play ${code}` : "Play";
   const target: GetTarget = { item, imdbID: detail.imdbID };
 
   return (
@@ -61,8 +68,8 @@ function TitleView({ detail }: { detail: TitleDetail }) {
           {detail.genres.length > 0 && <div className="muted small">{detail.genres.join(" · ")}</div>}
           <div className="actions">
             {playable ? (
-              <Link to={playPath(playable.id)} className="pill pill-primary">
-                <PlayIcon size={16} />{started ? ["Resume", code, remaining !== undefined ? leftLabel(remaining) : ""].filter(Boolean).join(" · ").replace("Resume · ", "Resume ") : "Play"}
+              <Link to={upNext?.entry ? `${playPath(playable.id)}?from=0` : playPath(playable.id)} className="pill pill-primary">
+                <PlayIcon size={16} />{playLabel}
               </Link>
             ) : item.kind === "movie" ? (
               <button type="button" className="pill pill-primary" disabled={get.busy} onClick={() => get.getBest(target)}>
@@ -79,7 +86,7 @@ function TitleView({ detail }: { detail: TitleDetail }) {
       </section>
 
       <div className="page-body">
-        {item.kind === "tv" && <Episodes detail={detail} onVersions={setVersions} />}
+        {item.kind === "tv" && <Episodes detail={detail} upNext={upNext} onVersions={setVersions} />}
         {detail.cast.length > 0 && (
           <section className="shelf">
             <div className="shelf-head"><h2>Cast &amp; Crew</h2></div>
@@ -112,14 +119,25 @@ function TitleView({ detail }: { detail: TitleDetail }) {
 const byEpisode = (a: LibraryEntry, b: LibraryEntry) => ((a.match?.season ?? 0) - (b.match?.season ?? 0)) || ((a.match?.episode ?? 0) - (b.match?.episode ?? 0));
 const initials = (name: string) => name.split(" ").map((w) => w[0]).join("").slice(0, 2);
 
-function Episodes({ detail, onVersions }: { detail: TitleDetail; onVersions: (t: GetTarget) => void }) {
+function Episodes({ detail, upNext, onVersions }: { detail: TitleDetail; upNext?: { season: number }; onVersions: (t: GetTarget) => void }) {
   const lib = useLibrary();
   const get = useGetAndWatch();
   const { item } = detail;
-  // Open on the season being watched (the latest started episode), else the first.
-  const watching = lib.matching(item.tmdbID).filter((e) => lib.resumeSeconds(e) >= 30 && e.match?.season !== undefined).sort(byEpisode).pop()?.match?.season;
-  const [season, setSeason] = useState(() => (watching && detail.seasons.some((s) => s.number === watching) ? watching : detail.seasons[0]?.number ?? 1));
+  // Open on the episode asked for (an Up Next card that isn't in put.io), else the season being watched (Up Next's,
+  // or the latest started episode's), else the first.
+  const [params] = useSearchParams();
+  const asked = Number(params.get("season")) || undefined;
+  const askedEpisode = Number(params.get("episode")) || undefined;
+  const watching = upNext?.season ?? lib.matching(item.tmdbID).filter((e) => lib.resumeSeconds(e) >= 30 && e.match?.season !== undefined).sort(byEpisode).pop()?.match?.season;
+  const [season, setSeason] = useState(() => [asked, watching].find((n) => n !== undefined && detail.seasons.some((s) => s.number === n)) ?? detail.seasons[0]?.number ?? 1);
   const episodes = useQuery({ queryKey: ["season", item.tmdbID, season], queryFn: () => tmdb.season(item.tmdbID, season), staleTime: 60 * 60_000 });
+  // Scrolled to once its row is there.
+  const scrolled = useRef(false);
+  useEffect(() => {
+    if (scrolled.current || !askedEpisode || season !== asked || !episodes.data) return;
+    scrolled.current = true;
+    document.getElementById(`episode-${askedEpisode}`)?.scrollIntoView({ block: "center" });
+  }, [askedEpisode, asked, season, episodes.data]);
   const inSeason = lib.matching(item.tmdbID, season);
   const aired = (episodes.data ?? []).filter((e) => !e.airDate || e.airDate <= new Date().toISOString().slice(0, 10));
   const haveAll = aired.length > 0 && aired.every((e) => inSeason.some((f) => f.match?.episode === e.number));
@@ -159,18 +177,20 @@ function EpisodeRow({ detail, season, episode, files, isBest, onVersions }: {
   const [menu, setMenu] = useState(false);
   const watched = [...files].sort((a, b) => lib.resumeSeconds(b) - lib.resumeSeconds(a))[0];
   const estimate = episode.runtimeMinutes ? episode.runtimeMinutes * 60 : undefined;
-  const fraction = watched ? lib.watchedFraction(watched, estimate) : undefined;
+  const done = files.some((f) => lib.isWatched(f.id));
+  const fraction = watched ? lib.watchedFraction(watched, estimate) ?? (done ? 1 : undefined) : undefined;
   const remaining = watched ? lib.remainingSeconds(watched, estimate) : undefined;
   const resume = watched ? lib.resumeSeconds(watched) : 0;
   const target: GetTarget = { item: detail.item, imdbID: detail.imdbID, season, episode: episode.number };
   const upcoming = episode.airDate && episode.airDate > new Date().toISOString().slice(0, 10);
 
   return (
-    <div className="episode">
+    <div className="episode" id={`episode-${episode.number}`}>
       <div className="episode-still">
         <div className="still">
           {episode.stillPath ? <img src={image(episode.stillPath, "w500")} alt="" loading="lazy" /> : <div className="still-fallback" />}
           {resume >= 30 && remaining !== undefined && <span className="chip-left"><PlayIcon size={10} />{leftLabel(remaining)}</span>}
+          {done && resume < 30 && <WatchedChip />}
         </div>
         {fraction !== undefined && <WatchedBar fraction={fraction} />}
       </div>
