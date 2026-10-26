@@ -1,16 +1,23 @@
 /** Every torrent source at once (port of the iPhone app's ReleaseAggregator): the sources turned on in Settings are
- * asked in parallel, each with 12 seconds to answer; the same torrent from several sources becomes one row. */
+ * asked in parallel, each with 12 seconds to answer; the same torrent from several sources becomes one row. Releases
+ * that look fake never come out of it: names and sizes are checked as they arrive (lib/releaseSafety), releases
+ * downloaded before and found fake are dropped, and once every source has answered the file lists of the top
+ * releases are read (fileLists) before the search counts as finished. */
 import type { ChillClient } from "../chill";
+import { badReleases, isBlocked } from "../../lib/badReleases";
+import { describeRejection, releaseRejection, type ReleaseRejection } from "../../lib/releaseSafety";
 import type { AppSettings } from "../../lib/settings";
 import { apibay } from "./apibay";
 import { eztv } from "./eztv";
 import { knaben } from "./knaben";
 import { torrentGalaxy } from "./torrentgalaxy";
 import { torrentsCSV } from "./torrentscsv";
-import { anySignal, SourceError, type Release, type ReleaseQuery, type SourceID, type SourceProvider } from "./types";
+import { fileListCandidates, fileRejections } from "./fileLists";
+import { anySignal, releaseKey, SourceError, type Release, type ReleaseQuery, type SourceID, type SourceProvider } from "./types";
 import { yts } from "./yts";
 
 export type { Release, ReleaseQuery, SourceID, SourceProvider } from "./types";
+export { releaseKey } from "./types";
 
 const direct: Record<Exclude<SourceID, "chill">, SourceProvider> = { yts, eztv, apibay, knaben, torrentscsv: torrentsCSV, torrentgalaxy: torrentGalaxy };
 
@@ -34,10 +41,27 @@ export interface ReleaseSnapshot {
   failures: SourceFailure[];
   /** Sources still searching. */
   pending: SourceID[];
+  /** Every source answered and the file lists of the top releases are being read. */
+  checkingFiles?: boolean;
+  /** How many releases were left out because they look fake. */
+  hidden?: number;
 }
 
-/** Merge key: the info-hash when known, else name and size. */
-export const releaseKey = (r: Release) => r.infoHash ?? `${r.name.toLowerCase()}|${r.sizeBytes ?? -1}`;
+/** What was asked for, in words: its own words don't count as fake wording ("Crack" (2024)). */
+const askedTitle = (query: ReleaseQuery) => (query.kind === "text" ? query.text : query.title);
+
+function logRejection(name: string, reason: ReleaseRejection) {
+  if (import.meta.env.DEV) console.debug(`[release-safety] hid ${name}: ${describeRejection(reason)}`);
+}
+
+/** The rows that don't look fake by name or size and weren't found fake before. */
+export function screenReleases(rows: Release[], query: ReleaseQuery, blocked: Set<string>): Release[] {
+  return rows.filter((row) => {
+    const reason: ReleaseRejection | undefined = isBlocked(row, blocked) ? { kind: "knownBad" } : releaseRejection(row.name, row.sizeBytes, row.parsed, askedTitle(query));
+    if (reason) logRejection(row.name, reason);
+    return !reason;
+  });
+}
 
 /** Adds `incoming` to `existing`, first-seen order. Duplicates keep the most seeders, every source tag, a size when
  * one of them knows it, and a magnet link over a chill link. */
@@ -53,6 +77,8 @@ export function mergeReleases(existing: Release[], incoming: Release[]): Release
       seeders: row.seeders === undefined ? current.seeders : Math.max(current.seeders ?? 0, row.seeders),
       sizeBytes: current.sizeBytes ?? row.sizeBytes,
       link: !current.link.startsWith("magnet:") && row.link.startsWith("magnet:") ? row.link : current.link,
+      files: current.files ?? row.files,
+      fileListURL: current.fileListURL ?? row.fileListURL,
     });
   }
   return [...byKey.values()];
@@ -84,10 +110,17 @@ const failureMessage = (id: SourceID, error: unknown) => {
 export async function searchReleases(
   query: ReleaseQuery,
   providers: SourceProvider[],
-  options: { timeoutMs?: number; signal?: AbortSignal; onUpdate?: (s: ReleaseSnapshot) => void } = {},
+  options: {
+    timeoutMs?: number; signal?: AbortSignal; onUpdate?: (s: ReleaseSnapshot) => void;
+    /** Lowercased info-hashes and links found fake before (default: the ones remembered in this browser). */
+    blocked?: Set<string>;
+    /** Read the top releases' file lists before finishing (default on). */
+    checkFiles?: boolean;
+  } = {},
 ): Promise<ReleaseSnapshot> {
   const timeoutMs = options.timeoutMs ?? 12_000;
-  let snapshot: ReleaseSnapshot = { releases: [], failures: [], pending: providers.map((p) => p.id) };
+  const blocked = options.blocked ?? badReleases();
+  let snapshot: ReleaseSnapshot = { releases: [], failures: [], pending: providers.map((p) => p.id), hidden: 0 };
   options.onUpdate?.(snapshot);
   await Promise.all(providers.map(async (provider) => {
     const timeout = AbortSignal.timeout(timeoutMs);
@@ -100,12 +133,26 @@ export async function searchReleases(
       failure = { source: provider.id, message: failureMessage(provider.id, timeout.aborted ? new DOMException("", "TimeoutError") : error) };
     }
     if (options.signal?.aborted) return;
+    const kept = screenReleases(rows, query, blocked);
+    const pending = snapshot.pending.filter((id) => id !== provider.id);
     snapshot = {
-      releases: mergeReleases(snapshot.releases, rows),
+      releases: mergeReleases(snapshot.releases, kept),
       failures: failure ? [...snapshot.failures, failure] : snapshot.failures,
-      pending: snapshot.pending.filter((id) => id !== provider.id),
+      pending,
+      hidden: (snapshot.hidden ?? 0) + rows.length - kept.length,
+      checkingFiles: pending.length === 0 && options.checkFiles !== false,
     };
     options.onUpdate?.(snapshot);
   }));
+  if (!snapshot.checkingFiles || options.signal?.aborted) return snapshot;
+  const rejected = await fileRejections(fileListCandidates(snapshot.releases), options.signal);
+  for (const r of snapshot.releases) { const reason = rejected.get(releaseKey(r)); if (reason) logRejection(r.name, reason); }
+  snapshot = {
+    ...snapshot,
+    releases: snapshot.releases.filter((r) => !rejected.has(releaseKey(r))),
+    hidden: (snapshot.hidden ?? 0) + rejected.size,
+    checkingFiles: false,
+  };
+  if (!options.signal?.aborted) options.onUpdate?.(snapshot);
   return snapshot;
 }

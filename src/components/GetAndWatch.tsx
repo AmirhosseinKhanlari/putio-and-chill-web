@@ -8,7 +8,9 @@ import { bytes } from "../lib/format";
 import { resolutionLabel } from "../lib/releaseName";
 import { noQueryMessage, noVersionsMessage, releaseQuery, type GetTarget } from "../lib/releaseQuery";
 import { loadSettings, qualityName, useSettings } from "../lib/settings";
-import { displayPath, pickRelease, sendToPutio } from "../lib/smartGet";
+import { badReleases, isBlocked } from "../lib/badReleases";
+import { fileRejection } from "../api/sources/fileLists";
+import { displayPath, pickCheckedRelease, sendToPutio } from "../lib/smartGet";
 import { useToast } from "../state/hooks";
 import { useSession } from "../state/session";
 import { CloseIcon } from "./Icons";
@@ -87,7 +89,8 @@ export function useGetAndWatch() {
     setBusy(true);
     try {
       const snapshot = await search(target);
-      const best = pickRelease(snapshot.releases, current.smartGet);
+      const blocked = badReleases();
+      const best = await pickCheckedRelease(snapshot.releases, current.smartGet, async (r) => (isBlocked(r, blocked) ? { kind: "knownBad" } : fileRejection(r)));
       if (best) { await send(target, best).catch(() => {}); return; }
       if (snapshot.releases.length) {
         toast(`Nothing fits Smart Get (${qualityName(current.smartGet.resolution)}${current.smartGet.maxSizeGB ? `, up to ${current.smartGet.maxSizeGB} GB` : ""}). Pick a version.`);
@@ -163,7 +166,7 @@ function VersionsPanel({ target, deps, onClose }: { target: GetTarget; deps: Ver
     [snapshot.releases, resolution, sort],
   );
 
-  const searching = !error && (!started || snapshot.pending.length > 0);
+  const searching = !error && (!started || snapshot.pending.length > 0 || Boolean(snapshot.checkingFiles));
   const allFailed = !searching && !snapshot.releases.length && snapshot.failures.length > 0;
   const heading = target.text ? `“${target.text}”` : target.episode !== undefined ? `${target.item.title} · S${target.season} E${target.episode}` : target.season !== undefined ? `${target.item.title} · Season ${target.season}` : target.item.title;
 
@@ -208,7 +211,8 @@ function VersionsPanel({ target, deps, onClose }: { target: GetTarget; deps: Ver
         </div>
 
         <div className="versions-status muted small" role="status" aria-live="polite">
-          {searching && <span>Searching {snapshot.pending.length ? snapshot.pending.map((id) => sourceNames[id]).join(", ") : "every source"}…</span>}
+          {searching && <span>{snapshot.checkingFiles ? "Checking files…" : `Searching ${snapshot.pending.length ? snapshot.pending.map((id) => sourceNames[id]).join(", ") : "every source"}…`}</span>}
+          {!searching && (snapshot.hidden ?? 0) > 0 && <span>{snapshot.hidden === 1 ? "1 version that looks fake is hidden." : `${snapshot.hidden} versions that look fake are hidden.`} </span>}
           {!searching && snapshot.failures.length > 0 && !allFailed && <span>{snapshot.failures.map((f) => f.message).join(" ")}</span>}
         </div>
 

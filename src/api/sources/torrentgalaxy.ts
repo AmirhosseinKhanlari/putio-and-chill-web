@@ -1,8 +1,10 @@
 /** TorrentGalaxy (port of the iPhone app's TorrentGalaxyProvider): torrentgalaxy.info's HTML search, most seeded
  * first. Its list has no info-hashes, so the detail pages of the best few matches are read for theirs, a few at a
- * time; matches without a hash are left out (put.io needs a magnet link). The site doesn't allow browser requests,
+ * time; matches without a hash are left out (put.io needs a magnet link). The same pages list the files inside, which
+ * are kept for the fake check. The site doesn't allow browser requests,
  * so it goes through the app's /proxy/torrentgalaxy. */
 import { parseReleaseName } from "../../lib/releaseName";
+import type { TorrentFile } from "../../lib/releaseSafety";
 import { infoHashFromMagnet, makeMagnet, normalizeHash } from "./magnet";
 import { proxyURL } from "./proxyTargets";
 import { anySignal, fetchText, matchesQuery, searchText, type Release, type ReleaseQuery, type SourceProvider } from "./types";
@@ -59,6 +61,17 @@ export function parseDetailHash(html: string): string | undefined {
   return button ? infoHashFromMagnet(decodeEntities(button[1])) : undefined;
 }
 
+/** The detail page's "File List" table: one row per file, name then size ("3.1 GB", "584 bytes"). Rows whose second
+ * cell isn't a size (the page's tracker table uses the same classes) are skipped. */
+export function parseDetailFiles(html: string): TorrentFile[] {
+  const cells = /<td\b[^>]*\bclass="[^"]*\btable_col1\b[^"]*"[^>]*>([\s\S]*?)<\/td>\s*<td\b[^>]*\bclass="[^"]*\btable_col2\b[^"]*"[^>]*>([\s\S]*?)<\/td>/g;
+  return [...html.matchAll(cells)].flatMap((m): TorrentFile[] => {
+    const name = plainText(m[1]);
+    const size = /^\s*([\d.,]+)\s*([KMGT]i?B|bytes?|B)\s*$/.exec(plainText(m[2]));
+    return name && size ? [{ name, sizeBytes: toBytes(size[1], size[2]) }] : [];
+  });
+}
+
 /** "3.1 GB" → bytes. The site counts in 1024s, as torrent sites do. */
 export function toBytes(number: string, unit: string): number | undefined {
   const value = Number(number.replace(/,/g, ""));
@@ -89,11 +102,13 @@ export function torrentGalaxySource(detailLimit = 8): SourceProvider {
       const needed = matches.filter((m) => !m.row.infoHash)
         .sort((a, b) => (b.row.seeders ?? -1) - (a.row.seeders ?? -1))
         .slice(0, detailLimit).map((m) => m.row.detailPath);
-      const fetched = await detailHashes(needed, signal);
+      const fetched = await details(needed, signal);
       return matches.flatMap(({ row, parsed }): Release[] => {
-        const hash = row.infoHash ?? fetched.get(row.detailPath);
+        const detail = fetched.get(row.detailPath);
+        const hash = row.infoHash ?? detail?.hash;
         if (!hash) return [];
-        return [{ name: row.name, link: makeMagnet(hash, row.name), infoHash: hash, sizeBytes: row.sizeBytes, seeders: row.seeders, sources: ["TorrentGalaxy"], parsed }];
+        const files = detail?.files.length ? detail.files : undefined;
+        return [{ name: row.name, link: makeMagnet(hash, row.name), infoHash: hash, sizeBytes: row.sizeBytes, seeders: row.seeders, sources: ["TorrentGalaxy"], parsed, files }];
       });
     },
   };
@@ -101,21 +116,23 @@ export function torrentGalaxySource(detailLimit = 8): SourceProvider {
 
 export const torrentGalaxy = torrentGalaxySource();
 
-/** Detail path → info-hash, a few pages at a time. A page that fails, redirects or has no hash is skipped. */
-async function detailHashes(paths: string[], signal?: AbortSignal): Promise<Map<string, string>> {
-  const found = new Map<string, string>();
+interface Detail { hash: string; files: TorrentFile[] }
+
+/** Detail path → info-hash and files, a few pages at a time. A page that fails, redirects or has no hash is skipped. */
+async function details(paths: string[], signal?: AbortSignal): Promise<Map<string, Detail>> {
+  const found = new Map<string, Detail>();
   const queue = [...paths];
   const worker = async () => {
     for (let path = queue.shift(); path !== undefined; path = queue.shift()) {
-      const hash = await detailHash(path, signal);
-      if (hash) found.set(path, hash);
+      const detail = await readDetail(path, signal);
+      if (detail) found.set(path, detail);
     }
   };
   await Promise.all(Array.from({ length: Math.min(PARALLEL_DETAILS, paths.length) }, worker));
   return found;
 }
 
-async function detailHash(path: string, signal?: AbortSignal): Promise<string | undefined> {
+async function readDetail(path: string, signal?: AbortSignal): Promise<Detail | undefined> {
   const timeout = AbortSignal.timeout(DETAIL_TIMEOUT_MS);
   try {
     // The site sometimes redirects a detail page to its home page (seen after bursts of requests); "manual" makes
@@ -123,7 +140,8 @@ async function detailHash(path: string, signal?: AbortSignal): Promise<string | 
     const html = await fetchText("torrentgalaxy", proxyURL("torrentgalaxy", path), {
       signal: signal ? anySignal([signal, timeout]) : timeout, redirect: "manual", headers: { Accept: "text/html" },
     });
-    return parseDetailHash(html);
+    const hash = parseDetailHash(html);
+    return hash ? { hash, files: parseDetailFiles(html) } : undefined;
   } catch (error) {
     if (signal?.aborted) throw error;
     return undefined;

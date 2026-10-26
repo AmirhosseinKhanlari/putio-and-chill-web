@@ -1,6 +1,7 @@
 /** What every torrent source returns, and what it is asked for (the iPhone app's Release, MediaQuery and
  * ReleaseRelevance). */
 import type { ParsedRelease } from "../../lib/releaseName";
+import type { TorrentFile } from "../../lib/releaseSafety";
 import { sameShow, searchTitle } from "../../lib/showTitle";
 
 export type SourceID = "chill" | "yts" | "eztv" | "apibay" | "knaben" | "torrentscsv" | "torrentgalaxy";
@@ -16,7 +17,14 @@ export interface Release {
   /** Where it was found, e.g. "YTS", "TPB", "chill · 1337x". */
   sources: string[];
   parsed: ParsedRelease;
+  /** The files inside, when the source listed them with the result (TorrentGalaxy's detail page). */
+  files?: TorrentFile[];
+  /** Where the file list can be read on request (apibay, through the proxy), for the few releases worth checking. */
+  fileListURL?: string;
 }
+
+/** Merge key: the info-hash when known, else name and size. */
+export const releaseKey = (r: Release) => r.infoHash ?? `${r.name.toLowerCase()}|${r.sizeBytes ?? -1}`;
 
 /** What to look for. The IMDb id is optional: TMDB has shows without one ("Monster: The Ed Gein Story"), and those are
  * searched by title. Sources that only work by IMDb id skip such queries or fall back to their text search. */

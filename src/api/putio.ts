@@ -52,6 +52,8 @@ export interface PutioTransfer {
   file_id?: number;
   save_parent_id?: number;
   error_message?: string;
+  /** The torrent's info-hash. */
+  hash?: string;
 }
 
 export interface PutioSubtitle {

@@ -6,14 +6,16 @@ import type { PutioClient, PutioTransfer } from "../api/putio";
 import { defaultFolders, findFolder } from "./folders";
 import type { MediaKind } from "../api/tmdb";
 import { loadSettings, type AppSettings, type SmartGetRule } from "./settings";
+import { isDiscImage, type ReleaseRejection } from "./releaseSafety";
 import { readJSON, writeJSON } from "./storage";
 
 /** The preferred quality with the most seeders; else the nearest lower one; else the nearest higher one; unknown
  * quality last. Never a camera recording, never one bigger than the size cap (unknown sizes are allowed), never a
- * release nobody seeds (unless no release says how many seed it). "Best" (null) prefers 8K and works down. */
+ * release nobody seeds (unless no release says how many seed it), never a disc image (put.io can't stream one). "Best"
+ * (null) prefers 8K and works down. */
 export function pickRelease(releases: Release[], rule: SmartGetRule): Release | undefined {
   const cap = rule.maxSizeGB !== null ? rule.maxSizeGB * 1_000_000_000 : undefined;
-  const usable = releases.filter((r) => r.parsed.source !== "CAM" && (cap === undefined || r.sizeBytes === undefined || r.sizeBytes <= cap));
+  const usable = releases.filter((r) => r.parsed.source !== "CAM" && !isDiscImage(r.name) && (cap === undefined || r.sizeBytes === undefined || r.sizeBytes <= cap));
   const seeded = usable.filter((r) => (r.seeders ?? 0) > 0);
   const pool = seeded.length ? seeded : usable.filter((r) => r.seeders === undefined);
   const preferred = rule.resolution ?? 4320;
@@ -24,6 +26,21 @@ export function pickRelease(releases: Release[], rule: SmartGetRule): Release | 
     return res < preferred ? 10 + (preferred - res) : 5_000 + (res - preferred);
   };
   return [...pool].sort((a, b) => priority(a) - priority(b) || (b.seeders ?? 0) - (a.seeders ?? 0))[0];
+}
+
+/** `pickRelease`, then a look at the winner's files (`check`); a fake is set aside and the next best taken, up to
+ * `attempts` times. Most winners were already checked by the search, so this rarely waits. */
+export async function pickCheckedRelease(
+  releases: Release[], rule: SmartGetRule, check: (r: Release) => Promise<ReleaseRejection | undefined>, attempts = 4,
+): Promise<Release | undefined> {
+  let pool = releases;
+  for (let i = 0; i < Math.max(attempts, 1); i++) {
+    const candidate = pickRelease(pool, rule);
+    if (!candidate) return undefined;
+    if (!(await check(candidate))) return candidate;
+    pool = pool.filter((r) => r !== candidate);
+  }
+  return undefined;
 }
 
 type FolderSettings = Pick<AppSettings, "moviesFolder" | "tvFolder" | "seasonFolders">;
@@ -81,6 +98,8 @@ export interface PendingTransfer {
   posterPath?: string | null;
   backdropPath?: string | null;
   releaseName: string;
+  /** The magnet or torrent link sent, so a download that turns out fake can be remembered (older saves lack it). */
+  link?: string;
   addedAt: number;
 }
 
@@ -91,7 +110,7 @@ export const savePendingTransfers = (list: PendingTransfer[]) => writeJSON(PENDI
 export async function sendToPutio(
   putio: PutioClient,
   release: Release,
-  target: Omit<PendingTransfer, "transferID" | "releaseName" | "addedAt">,
+  target: Omit<PendingTransfer, "transferID" | "releaseName" | "link" | "addedAt">,
   folders: FolderSettings = loadSettings(),
 ): Promise<PutioTransfer> {
   const { rootID, path } = destination(folders, target.kind, target.title, target.season);
@@ -106,6 +125,6 @@ export async function sendToPutio(
     throw error;
   }
   const transfer = await putio.addTransfer(release.link, parent);
-  savePendingTransfers([{ ...target, transferID: transfer.id, releaseName: release.name, addedAt: Date.now() }, ...pendingTransfers()].slice(0, 50));
+  savePendingTransfers([{ ...target, transferID: transfer.id, releaseName: release.name, link: release.link, addedAt: Date.now() }, ...pendingTransfers()].slice(0, 50));
   return transfer;
 }

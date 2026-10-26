@@ -11,6 +11,8 @@ import { TopBar } from "../components/TopBar";
 import { bytes, speed } from "../lib/format";
 import type { LibraryEntry } from "../lib/library";
 import { entriesRequest, type FixMatchRequest } from "../lib/matchOverrides";
+import { badReleases } from "../lib/badReleases";
+import { fakeMessage, isFakeTransfer, reviewFinishedDownload } from "../lib/fakeDownloads";
 import { pendingTransfers, savePendingTransfers } from "../lib/smartGet";
 import { refreshLibrary, useAccount, useLibrary, useMyList, useToast } from "../state/hooks";
 import { usePutio } from "../state/session";
@@ -148,6 +150,12 @@ function Transfers() {
   const transfers = useQuery({ queryKey: ["transfers"], queryFn: () => putio.transfers(), refetchInterval: 5000 });
   const pending = pendingTransfers();
   const finished = useRef(new Set<number>());
+  // Finished downloads the app sent are looked through once: a fake (a program, or no video) is removed.
+  const doneSince = useRef(new Map<number, number>());
+  const reviewing = useRef(new Set<number>());
+  const reviewed = useRef(new Set<number>());
+  const [, setFakesFound] = useState(0);
+  const bad = badReleases();
 
   // A transfer that finishes adds files: read the library again (once per transfer).
   useEffect(() => {
@@ -156,6 +164,27 @@ function Transfers() {
     const first = finished.current.size === 0;
     done.forEach((id) => finished.current.add(id));
     if (!first) void refreshLibrary(putio);
+  }, [transfers.data, putio]);
+
+  useEffect(() => {
+    for (const t of (transfers.data ?? []).filter(isDone)) {
+      const p = pending.find((x) => x.transferID === t.id);
+      if (!p || reviewed.current.has(t.id) || reviewing.current.has(t.id) || isFakeTransfer(t, p, bad)) continue;
+      if (!doneSince.current.has(t.id)) doneSince.current.set(t.id, Date.now());
+      reviewing.current.add(t.id);
+      void reviewFinishedDownload(putio, t, p, doneSince.current.get(t.id)!).then((result) => {
+        reviewing.current.delete(t.id);
+        if (result === "wait") return;
+        reviewed.current.add(t.id);
+        if (result === "fake") {
+          toast(fakeMessage);
+          setFakesFound((n) => n + 1);
+          void refreshLibrary(putio);
+        }
+      });
+    }
+    // `pending` and `bad` are read fresh from storage each render; the poll drives this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transfers.data, putio]);
 
   const shown = (transfers.data ?? []).filter((t) => !isDone(t) || pending.some((p) => p.transferID === t.id)).slice(0, 12);
@@ -177,16 +206,18 @@ function Transfers() {
       <div className="transfers">
         {shown.map((t) => {
           const p = pending.find((x) => x.transferID === t.id);
-          const done = isDone(t);
+          const fake = isDone(t) && isFakeTransfer(t, p, bad);
+          const done = isDone(t) && !fake;
           const label = p ? `${p.title}${p.episode !== undefined ? ` · S${p.season} E${p.episode}` : p.season !== undefined ? ` · Season ${p.season}` : ""}` : t.name ?? "Transfer";
-          const status = done ? "Ready to watch" : isFailed(t) ? t.error_message || "Didn't download" : [`${t.percent_done ?? 0}%`, speed(t.down_speed)].filter(Boolean).join(" · ");
+          const status = fake ? fakeMessage : done ? "Ready to watch" : isFailed(t) ? t.error_message || "Didn't download" : [`${t.percent_done ?? 0}%`, speed(t.down_speed)].filter(Boolean).join(" · ");
           return (
             <div key={t.id} className="transfer">
               {p?.posterPath ? <img src={image(p.posterPath, "w185")} alt="" /> : <div className="transfer-fallback" />}
               <div className="transfer-text">
                 <div className="strong clamp-1">{label}</div>
-                <div className={done ? "small good" : isFailed(t) ? "small error-text" : "small muted"}>{status}</div>
-                {!done && !isFailed(t) && <div className="meter meter-thin"><div className="meter-fill" style={{ width: `${t.percent_done ?? 0}%` }} /></div>}
+                <div className={done ? "small good" : fake || isFailed(t) ? "small error-text" : "small muted"}>{status}</div>
+                {fake && p && p.tmdbID > 0 && <Link to={titlePath({ kind: p.kind, tmdbID: p.tmdbID })} className="small">Choose Another Version</Link>}
+                {!done && !fake && !isFailed(t) && <div className="meter meter-thin"><div className="meter-fill" style={{ width: `${t.percent_done ?? 0}%` }} /></div>}
               </div>
               {done && t.file_id ? (
                 // A whole season arrives as a folder: open it in Files.
@@ -194,7 +225,7 @@ function Transfers() {
                   ? <Link to={`/files/${t.file_id}`} className="round-button round-primary" aria-label={`Open ${label}`}><FolderIcon /></Link>
                   : <Link to={playPath(t.file_id)} className="round-button round-primary" aria-label={`Play ${label}`}><PlayIcon /></Link>
               ) : null}
-              <button type="button" className="round-button round-quiet" aria-label={done ? `Remove ${label} from this list` : `Cancel ${label}`} onClick={() => void cancel(t)}><CloseIcon /></button>
+              <button type="button" className="round-button round-quiet" aria-label={done || fake ? `Remove ${label} from this list` : `Cancel ${label}`} onClick={() => void cancel(t)}><CloseIcon /></button>
             </div>
           );
         })}
