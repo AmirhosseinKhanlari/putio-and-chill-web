@@ -14,6 +14,7 @@ import { displayPath, pickCheckedRelease, sendToPutio } from "../lib/smartGet";
 import { useToast } from "../state/hooks";
 import { useSession } from "../state/session";
 import { CloseIcon } from "./Icons";
+import { askToMakeRoom, NotEnoughSpace, roomOffer } from "./MakeRoom";
 import "../styles/versions.css";
 
 export type { GetTarget } from "../lib/releaseQuery";
@@ -67,8 +68,17 @@ export function useGetAndWatch() {
   async function send(target: GetTarget, release: Release) {
     if (!putio) return;
     const { item, season, episode } = target;
+    const transfer = () => sendToPutio(putio, release, { tmdbID: item.tmdbID, kind: item.kind, title: item.title, season, episode, posterPath: item.posterPath, backdropPath: item.backdropPath });
+    // Doesn't fit in put.io: ask before deleting anything to make room (nothing is sent otherwise).
+    const offer = await roomOffer(putio, release.sizeBytes, { title: item.title, kind: item.kind, tmdbID: target.text ? 0 : item.tmdbID, season, episode }).catch(() => undefined);
+    if (offer) {
+      const result = await askToMakeRoom(offer, putio, transfer);
+      if (!result) throw new NotEnoughSpace(offer.title);
+      toast(result);
+      return;
+    }
     try {
-      await sendToPutio(putio, release, { tmdbID: item.tmdbID, kind: item.kind, title: item.title, season, episode, posterPath: item.posterPath, backdropPath: item.backdropPath });
+      await transfer();
     } catch (error) {
       toast(error instanceof Error ? error.message : "put.io didn't take it. Try again.");
       throw error;

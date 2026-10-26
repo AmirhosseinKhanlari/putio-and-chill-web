@@ -66,6 +66,9 @@ export function SmartGetPage() {
       <Group title="Versions" footer="The quality Versions shows first. The others are one tap away.">
         <SelectRow label="Versions list shows" value={s.defaultResolution} options={resolutionOptions("All")} onChange={(defaultResolution) => updateSettings({ defaultResolution })} />
       </Group>
+      <Group footer="Offers to delete the oldest titles in Movies and TV Series, watched ones first, and always asks first. Nothing you're watching or saved to My List is ever offered. Off: just says there isn't enough space.">
+        <ToggleRow label="Make room on put.io when a download doesn't fit" checked={s.makeRoom} onChange={(makeRoom) => updateSettings({ makeRoom })} />
+      </Group>
     </>
   );
 }

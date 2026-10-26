@@ -6,6 +6,7 @@ import type { PutioTransfer } from "../api/putio";
 import { EntryCard, playPath, Poster, titlePath, WatchedChip } from "../components/Cards";
 import { Menu, placeUnder, type MenuPlace } from "../components/files/Menu";
 import { FixMatchDialog } from "../components/FixMatch";
+import { retryMakingRoom } from "../components/MakeRoom";
 import { CloseIcon, FolderIcon, MoreIcon, PlayIcon, RefreshIcon } from "../components/Icons";
 import { TopBar } from "../components/TopBar";
 import { bytes, speed } from "../lib/format";
@@ -13,7 +14,8 @@ import type { LibraryEntry } from "../lib/library";
 import { entriesRequest, type FixMatchRequest } from "../lib/matchOverrides";
 import { badReleases } from "../lib/badReleases";
 import { fakeMessage, isFakeTransfer, reviewFinishedDownload } from "../lib/fakeDownloads";
-import { pendingTransfers, savePendingTransfers } from "../lib/smartGet";
+import { isOutOfSpace } from "../lib/makeRoom";
+import { pendingTransfers, savePendingTransfers, type PendingTransfer } from "../lib/smartGet";
 import { refreshLibrary, useAccount, useLibrary, useMyList, useToast } from "../state/hooks";
 import { usePutio } from "../state/session";
 
@@ -190,6 +192,16 @@ function Transfers() {
   const shown = (transfers.data ?? []).filter((t) => !isDone(t) || pending.some((p) => p.transferID === t.id)).slice(0, 12);
   if (!shown.length) return null;
 
+  /** put.io stopped it for lack of space: make room (asking first), then retry it. */
+  async function makeRoom(t: PutioTransfer, p?: PendingTransfer) {
+    try {
+      toast(await retryMakingRoom(putio, t, p ?? { title: t.name ?? "This download", kind: "movie", tmdbID: 0 }));
+      await client.invalidateQueries({ queryKey: ["transfers"] });
+    } catch {
+      toast("Couldn't retry it on put.io. Try again.");
+    }
+  }
+
   async function cancel(t: PutioTransfer) {
     try {
       await (isDone(t) || isFailed(t) ? putio.cleanTransfers([t.id]) : putio.cancelTransfers([t.id]));
@@ -216,6 +228,7 @@ function Transfers() {
               <div className="transfer-text">
                 <div className="strong clamp-1">{label}</div>
                 <div className={done ? "small good" : fake || isFailed(t) ? "small error-text" : "small muted"}>{status}</div>
+                {isFailed(t) && isOutOfSpace(t.error_message) && <button type="button" className="link-button small" onClick={() => void makeRoom(t, p)}>Make room &amp; retry</button>}
                 {fake && p && p.tmdbID > 0 && <Link to={titlePath({ kind: p.kind, tmdbID: p.tmdbID })} className="small">Choose Another Version</Link>}
                 {!done && !fake && !isFailed(t) && <div className="meter meter-thin"><div className="meter-fill" style={{ width: `${t.percent_done ?? 0}%` }} /></div>}
               </div>

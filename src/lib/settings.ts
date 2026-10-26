@@ -58,6 +58,9 @@ export interface AppSettings {
   autoCleanDays: number | null;
   /** IMDb watchlist link, shown on Home. */
   imdbWatchlist: string | null;
+  /** A download that doesn't fit in put.io offers to delete the oldest titles in Movies and TV Series (always asking
+   * first). Off: just says there isn't enough space. */
+  makeRoom: boolean;
 }
 
 export const defaultSources: SourceConfig[] = [
@@ -88,6 +91,7 @@ export const defaultSettings: AppSettings = {
   seasonFolders: true,
   autoCleanDays: null,
   imdbWatchlist: null,
+  makeRoom: true,
 };
 
 /** Saved settings with defaults for anything newer (and every known source, in order). */

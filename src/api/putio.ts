@@ -215,6 +215,11 @@ export class PutioClient {
     return (await this.request<{ transfer: PutioTransfer }>("transfers/add", { form })).transfer;
   }
 
+  /** Starts a failed transfer again (after making room). */
+  async retryTransfer(id: number): Promise<PutioTransfer> {
+    return (await this.request<{ transfer: PutioTransfer }>("transfers/retry", { form: { id: String(id) } })).transfer;
+  }
+
   async cancelTransfers(ids: number[]): Promise<void> {
     await this.request("transfers/cancel", { form: { transfer_ids: ids.join(",") } });
   }
