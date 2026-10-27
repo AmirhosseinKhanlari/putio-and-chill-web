@@ -55,6 +55,16 @@ describe("LibraryIndex", () => {
     expect(index.continueWatching().map((e) => e.id)).toEqual([2, 1]);
   });
 
+  it("uses put.io's length for videos started outside this app", async () => {
+    const started = { list: async () => ({ files: [file(1, "Extremely.Wicked.2019.mkv", { start_from: 6000, video_metadata: { duration: 6420.4 } })] }) } as unknown as PutioClient;
+    const index = new LibraryIndex();
+    await index.refresh(started, search);
+    const entry = index.entries[0];
+    expect(index.remainingSeconds(entry, 9999)).toBe(420);
+    index.noteProgress(1, 6000, 6500);
+    expect(index.remainingSeconds(entry)).toBe(500);
+  });
+
   it("shows how much is left from the player's length, else the estimate", async () => {
     const index = new LibraryIndex();
     await index.refresh(putio, search);

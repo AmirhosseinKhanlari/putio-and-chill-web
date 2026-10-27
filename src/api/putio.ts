@@ -15,6 +15,8 @@ export interface PutioFile {
   screenshot?: string;
   need_convert?: boolean;
   is_mp4_available?: boolean;
+  /** What put.io found in a video; `duration` in seconds (sent when the listing asks for `video_metadata`). */
+  video_metadata?: { duration?: number | null } | null;
 }
 
 export interface PutioAccount {
@@ -100,7 +102,8 @@ export class PutioClient {
   }
 
   async list(parentID: number): Promise<{ parent?: PutioFile; files: PutioFile[] }> {
-    return this.request("files/list", { query: { parent_id: String(parentID), per_page: "1000" } });
+    // video_metadata: each video's length, for the bar and the time left on cards (as put.io's own apps ask).
+    return this.request("files/list", { query: { parent_id: String(parentID), per_page: "1000", video_metadata: "1" } });
   }
 
   async file(id: number): Promise<PutioFile> {

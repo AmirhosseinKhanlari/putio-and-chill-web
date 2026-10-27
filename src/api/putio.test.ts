@@ -13,6 +13,14 @@ function stubFetch(body: unknown) {
   return calls;
 }
 
+describe("files/list", () => {
+  it("asks for each video's length", async () => {
+    const calls = stubFetch({ files: [], status: "OK" });
+    await new PutioClient("t0ken").list(7);
+    expect(new URL(calls[0].url).searchParams.get("video_metadata")).toBe("1");
+  });
+});
+
 describe("start-from (put.io's documented endpoints)", () => {
   const putio = new PutioClient("t0ken");
 

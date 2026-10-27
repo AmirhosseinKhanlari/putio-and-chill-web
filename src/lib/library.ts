@@ -31,6 +31,8 @@ export interface LibraryEntry {
   createdAt?: string;
   updatedAt?: string;
   startFrom: number;
+  /** The video's length in seconds, as put.io measured it. */
+  duration?: number;
   parentID?: number;
   folderName?: string;
   /** The folder above `folderName` ("Show" for "Show/Season 2/E01.mkv"). */
@@ -208,19 +210,19 @@ export class LibraryIndex {
       .slice(0, limit);
   }
 
-  /** How much is watched (0…1): the length the player saw, else `estimatedSeconds` (TMDB's runtime). A watched
-   * video is all of it. */
+  /** How much is watched (0…1): the length the player saw, else put.io's, else `estimatedSeconds` (TMDB's runtime).
+   * A watched video is all of it. */
   watchedFraction(entry: LibraryEntry, estimatedSeconds?: number): number | undefined {
     const position = this.resumeSeconds(entry);
     if (this.isWatched(entry.id) && position < STARTED_SECONDS) return 1;
-    const length = this.durations[entry.id] ?? estimatedSeconds;
+    const length = this.durations[entry.id] ?? entry.duration ?? estimatedSeconds;
     if (position < 30 || !length) return undefined;
     return Math.min(1, position / length);
   }
 
   remainingSeconds(entry: LibraryEntry, estimatedSeconds?: number): number | undefined {
     const position = this.resumeSeconds(entry);
-    const length = this.durations[entry.id] ?? estimatedSeconds;
+    const length = this.durations[entry.id] ?? entry.duration ?? estimatedSeconds;
     if (position < 30 || !length || length <= position) return undefined;
     return length - position;
   }
@@ -369,7 +371,7 @@ export class LibraryIndex {
         const chosen = overrideFor(this.overrides, file, folderChain(file.parent_id, folders));
         entries[index] = {
           id: file.id, name: file.name, size: file.size, createdAt: file.created_at, updatedAt: file.updated_at,
-          startFrom: file.start_from ?? 0, parentID: file.parent_id, folderName: folder, grandparentName: grandparent,
+          startFrom: file.start_from ?? 0, duration: videoLength(file), parentID: file.parent_id, folderName: folder, grandparentName: grandparent,
           match: chosen ? applyOverride(chosen, file.name, folder, grandparent) : await this.match(file.name, folder, grandparent, search, seasonCount),
         };
       }
@@ -558,3 +560,9 @@ export class LibraryIndex {
 }
 
 export const library = new LibraryIndex();
+
+/** A video's length in whole seconds from put.io's listing; undefined when it hasn't measured it (or says 0). */
+export function videoLength(file: PutioFile): number | undefined {
+  const seconds = file.video_metadata?.duration;
+  return seconds && Number.isFinite(seconds) && seconds >= 1 ? Math.round(seconds) : undefined;
+}
